@@ -3,8 +3,8 @@
 Supports any provider LiteLLM understands:
   - anthropic/claude-haiku-4-5       (default; cloud, 200K context, ~$0.15/novel)
   - anthropic/claude-sonnet-4-6      (cloud, larger context headroom)
-  - openai/gpt-4o-mini               (cloud; ~6x cheaper than Haiku; set OPENAI_API_KEY)
-  - openai/gpt-4.1-mini              (cloud; newer GPT mini tier)
+  - openai/gpt-5.4-mini              (cloud; cheaper than Haiku; set OPENAI_API_KEY)
+  - openai/gpt-5.4-nano              (cloud; cheapest extraction baseline)
   - ollama/gemma4:26b-mlx-bf16       (local/Tailnet Ollama, set api_base + num_ctx)
   - ollama/gemma3:12b                 (local Ollama, no key required)
 

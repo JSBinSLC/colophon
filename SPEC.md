@@ -155,10 +155,16 @@ Colophon uses **LiteLLM** as the AI abstraction layer, giving users a single con
 
 - Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`) — **current default for Stage 1** (`anthropic/claude-haiku-4-5`)
 - Local models via Ollama (`gemma3:12b`, `mistral`, etc.) — no API key; custom endpoints (e.g. Tailnet Mac Studio) via `--ollama-url` + `--num-ctx`
-- OpenAI (`gpt-4o-mini`, `gpt-4.1-mini`, or any current cheap tier) — set `OPENAI_API_KEY` in `.env` and use `--llm openai/<model-id>`; provider routing is automatic
+- OpenAI (`gpt-5.4-mini`, `gpt-5.4-nano`, or any current tier) — set `OPENAI_API_KEY` in `.env` and use `--llm openai/<model-id>`; provider routing is automatic. Add `--use-batch` for the **OpenAI Batch API** (~50% cheaper, up to 24h turnaround — see below)
 - Any other LiteLLM-supported provider
 
 The LLM is **enhancing** decisions made by deterministic stages, not replacing them. If no LLM is configured, Colophon falls back to spaCy + regex for NER and chapter detection. The LLM accelerates and improves confidence; it is never a hard dependency for core repair.
+
+**OpenAI Batch API** (`--use-batch`): Stage 1 chunks are submitted as a single batch job rather than fired one at a time. OpenAI processes them asynchronously with up to a 24h window and charges ~50% of the real-time rate. The pipeline polls on a 30s interval (configurable), logs progress with the batch ID, and resumes when complete. Use this for large libraries or overnight runs; the flag is ignored for non-OpenAI models. Fallback to sequential fires automatically if the `openai` package is unavailable.
+
+```bash
+colophon fix war-and-peace.epub --llm openai/gpt-5.4-nano --use-batch
+```
 
 **Stage 1 reliability notes (from early dogfooding):**
 - Calls go through `LLMAdapter` with exponential backoff on `RateLimitError` (free-tier Anthropic keys are 5 req/min, 10K tokens/min — a full novel still completes, just slowly).
@@ -376,6 +382,8 @@ Each tournament run:
 | `gemma3:12b` | Ollama local | 128K | Lower-resource local fallback |
 | `claude-haiku-4-5` | Anthropic API | 200K | Cloud default; cheap per token |
 | `claude-sonnet-4-6` | Anthropic API | 200K | Cloud quality tier |
+| `gpt-5.4-mini` | OpenAI API | TBD | Primary OpenAI candidate; use `--use-batch` for 50% discount |
+| `gpt-5.4-nano` | OpenAI API | TBD | Cheap extraction baseline; batch mode recommended |
 
 ### CLI usage
 

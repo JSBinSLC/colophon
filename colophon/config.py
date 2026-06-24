@@ -17,6 +17,11 @@ class LLMConfig(BaseModel):
     api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
     num_ctx: int | None = None      # Ollama context window override (tokens)
     timeout: int = 600
+    # OpenAI Batch API — 50% cheaper, async (up to 24h turnaround).
+    # Only active for openai/* models; ignored by other providers.
+    use_batch: bool = False
+    batch_poll_interval: int = 30   # Seconds between status checks
+    batch_timeout: int = 86400      # Give up after this many seconds (default 24h)
 
     def resolved_api_key(self) -> str | None:
         """Return the API key for the configured provider.

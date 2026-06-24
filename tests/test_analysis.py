@@ -16,6 +16,7 @@ from colophon.config import LLMConfig, OutputConfig, PipelineConfig
 from colophon.stages.analysis import (
     AnalysisStage,
     _build_graph,
+    _build_graph_batch,
     _chunk_spine,
     _extract_spine_texts,
     _merge_into,
@@ -307,3 +308,169 @@ def test_analysis_stage_no_persist(tmp_path):
         stage.run(ctx)
 
     assert not epub.with_suffix(".colophon.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Batch API path
+# ---------------------------------------------------------------------------
+
+def _make_batch_result_line(custom_id: str, content: str) -> str:
+    """Build a single JSONL line in OpenAI Batch API result format."""
+    import json
+    return json.dumps({
+        "custom_id": custom_id,
+        "response": {
+            "status_code": 200,
+            "body": {
+                "choices": [{"message": {"content": content}}],
+            },
+        },
+        "error": None,
+    })
+
+
+_BATCH_NER_RESPONSE = json.dumps({
+    "characters": [{"canonical": "Spock", "variants": ["Mr. Spock"], "occurrences": 7}],
+    "places": [],
+    "organizations": [],
+    "invented_terms": [],
+    "chapters": [],
+})
+
+
+def _mock_openai_client(completed_status: str = "completed") -> MagicMock:
+    """Build a fully wired mock OpenAI client for Batch API calls."""
+    client = MagicMock()
+
+    # files.create → file object with .id
+    mock_file = MagicMock()
+    mock_file.id = "file-input-123"
+    client.files.create.return_value = mock_file
+
+    # batches.create → in_progress batch
+    mock_batch_in_progress = MagicMock()
+    mock_batch_in_progress.id = "batch-abc"
+    mock_batch_in_progress.status = "in_progress"
+
+    # batches.retrieve → completed batch
+    mock_batch_done = MagicMock()
+    mock_batch_done.id = "batch-abc"
+    mock_batch_done.status = completed_status
+    mock_batch_done.output_file_id = "file-output-456"
+
+    client.batches.create.return_value = mock_batch_in_progress
+    client.batches.retrieve.return_value = mock_batch_done
+
+    # files.content → JSONL result text (one line per chunk)
+    mock_content = MagicMock()
+    mock_content.text = _make_batch_result_line("chunk-0", _BATCH_NER_RESPONSE)
+    client.files.content.return_value = mock_content
+
+    return client
+
+
+def test_batch_mode_submits_and_parses(tmp_path):
+    """Batch path: successful completion → partial graphs returned."""
+    cfg = PipelineConfig()
+    cfg.llm.model = "openai/gpt-5.4-mini"
+    cfg.llm.use_batch = True
+    cfg.llm.batch_poll_interval = 0   # no sleeping in tests
+    cfg.llm.batch_timeout = 3600
+
+    chunks = [{"text": "Spock entered the bridge.", "hrefs": ["ch1.xhtml"]}]
+
+    mock_client = _mock_openai_client()
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        partials = _build_graph_batch(cfg, chunks)
+
+    assert partials is not None
+    assert len(partials) == 1
+    assert partials[0]["characters"][0]["canonical"] == "Spock"
+
+    # Verify the batch API sequence was called correctly
+    mock_client.files.create.assert_called_once()
+    mock_client.batches.create.assert_called_once()
+    mock_client.batches.retrieve.assert_called_once()   # polled once → completed
+    mock_client.files.content.assert_called_once_with("file-output-456")
+
+
+def test_batch_mode_jsonl_content(tmp_path):
+    """The uploaded JSONL must contain one valid request per chunk."""
+    cfg = PipelineConfig()
+    cfg.llm.model = "openai/gpt-5.4-nano"
+    cfg.llm.use_batch = True
+    cfg.llm.batch_poll_interval = 0
+    cfg.llm.batch_timeout = 3600
+
+    chunks = [
+        {"text": "Chunk one text.", "hrefs": ["ch1.xhtml"]},
+        {"text": "Chunk two text.", "hrefs": ["ch2.xhtml"]},
+    ]
+
+    captured_jsonl: list[str] = []
+
+    mock_client = _mock_openai_client()
+
+    def capturing_create(**kwargs):
+        captured_jsonl.append(kwargs["file"][1].read().decode())
+        mock_file = MagicMock()
+        mock_file.id = "file-input-123"
+        return mock_file
+
+    mock_client.files.create.side_effect = capturing_create
+
+    # Two-chunk result
+    mock_client.files.content.return_value.text = "\n".join([
+        _make_batch_result_line("chunk-0", _BATCH_NER_RESPONSE),
+        _make_batch_result_line("chunk-1", _BATCH_NER_RESPONSE),
+    ])
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        partials = _build_graph_batch(cfg, chunks)
+
+    assert len(partials) == 2
+
+    # Inspect the uploaded JSONL
+    lines = [l for l in captured_jsonl[0].splitlines() if l.strip()]
+    assert len(lines) == 2
+    req0 = json.loads(lines[0])
+    assert req0["custom_id"] == "chunk-0"
+    assert req0["body"]["model"] == "gpt-5.4-nano"   # prefix stripped
+
+
+def test_batch_mode_failed_batch_returns_empty(tmp_path):
+    """If the batch fails/expires, return an empty list (don't crash)."""
+    cfg = PipelineConfig()
+    cfg.llm.model = "openai/gpt-5.4-mini"
+    cfg.llm.use_batch = True
+    cfg.llm.batch_poll_interval = 0
+    cfg.llm.batch_timeout = 3600
+
+    chunks = [{"text": "Some text.", "hrefs": ["ch1.xhtml"]}]
+    mock_client = _mock_openai_client(completed_status="failed")
+
+    with patch("openai.OpenAI", return_value=mock_client):
+        partials = _build_graph_batch(cfg, chunks)
+
+    assert partials == []
+
+
+def test_batch_mode_ignored_for_non_openai(tmp_path):
+    """use_batch is silently ignored when the model is not openai/*."""
+    epub = _make_epub(tmp_path, {"ch1.html": "Kirk."})
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _extract_epub(epub, work_dir)
+
+    cfg = PipelineConfig()
+    cfg.llm.model = "anthropic/claude-haiku-4-5"
+    cfg.llm.use_batch = True   # should be ignored — model is anthropic/
+
+    with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
+        MockAdapter.return_value.complete_json.return_value = MOCK_RESPONSE
+        with patch("colophon.stages.analysis._build_graph_batch") as mock_batch:
+            stage = AnalysisStage()
+            ctx: dict = {"epub_path": epub, "config": cfg, "work_dir": work_dir}
+            stage.run(ctx)
+            mock_batch.assert_not_called()   # batch path never entered

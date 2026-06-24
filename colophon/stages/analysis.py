@@ -255,9 +255,6 @@ def _build_graph(
     source_sha256: str,
 ) -> dict[str, Any]:
     """Run LLM analysis over all spine items (chunked if needed) and merge."""
-    # Cloud models have ample context; only local Ollama models (num_ctx set)
-    # need their window respected. Either way, cap at MAX_CHUNK_CHARS so the
-    # JSON response is never truncated by an over-large input.
     if config.llm.num_ctx:
         context_chars = (config.llm.num_ctx - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
         usable_chars = max(1, min(context_chars, MAX_CHUNK_CHARS))
@@ -265,20 +262,150 @@ def _build_graph(
         usable_chars = MAX_CHUNK_CHARS
 
     chunks = _chunk_spine(spine_texts, usable_chars)
-    partial_graphs: list[dict[str, Any]] = []
 
+    if config.llm.use_batch and config.llm.model.startswith("openai/"):
+        partial_graphs = _build_graph_batch(config, chunks)
+        if partial_graphs is None:
+            log.warning("Stage 1: batch unavailable, falling back to sequential")
+            partial_graphs = _sequential_analyze(adapter, chunks)
+    else:
+        partial_graphs = _sequential_analyze(adapter, chunks)
+
+    graph = empty_graph(source_sha256, config.llm.model)
+    if partial_graphs:
+        _merge_into(graph, partial_graphs)
+    return graph
+
+
+def _sequential_analyze(
+    adapter: LLMAdapter, chunks: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Call the LLM once per chunk, in order, with exponential backoff."""
+    partials: list[dict[str, Any]] = []
     for i, chunk in enumerate(chunks):
         label = f"chunk {i + 1}/{len(chunks)}"
         user_msg = f"Book passage ({label}):\n\n{chunk['text']}"
         result = _call_with_backoff(adapter, label, user_msg)
         if result is not None:
-            partial_graphs.append(result)
+            partials.append(result)
+    return partials
 
-    graph = empty_graph(source_sha256, config.llm.model)
-    if partial_graphs:
-        _merge_into(graph, partial_graphs)
 
-    return graph
+def _build_graph_batch(
+    config: PipelineConfig,
+    chunks: list[dict[str, Any]],
+) -> list[dict[str, Any]] | None:
+    """Submit all chunks to the OpenAI Batch API; poll until complete.
+
+    Returns the list of partial graph dicts on success, or None if the openai
+    package is unavailable (signals the caller to fall back to sequential).
+
+    Pricing: ~50% cheaper than real-time; completion window up to 24h.
+    Only called when config.llm.use_batch is True and model is openai/*.
+    """
+    import io
+
+    try:
+        import openai as _openai
+    except ImportError:  # pragma: no cover
+        log.warning("Stage 1 batch: openai package not installed")
+        return None
+
+    api_key  = config.llm.resolved_api_key()
+    model_id = config.llm.model.split("/", 1)[-1]  # "openai/gpt-5.4-mini" → "gpt-5.4-mini"
+
+    client = _openai.OpenAI(api_key=api_key)
+
+    # Build one JSONL request per chunk
+    requests = [
+        {
+            "custom_id": f"chunk-{i}",
+            "method": "POST",
+            "url": "/v1/chat/completions",
+            "body": {
+                "model": model_id,
+                "messages": [
+                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "user",   "content": f"Book passage (chunk {i + 1}/{len(chunks)}):\n\n{chunk['text']}"},
+                ],
+            },
+        }
+        for i, chunk in enumerate(chunks)
+    ]
+    jsonl = ("\n".join(json.dumps(r) for r in requests) + "\n").encode("utf-8")
+
+    log.info("Stage 1 batch: uploading %d chunks to OpenAI Files API", len(requests))
+    batch_file = client.files.create(
+        file=("batch.jsonl", io.BytesIO(jsonl), "application/jsonl"),
+        purpose="batch",
+    )
+
+    batch = client.batches.create(
+        input_file_id=batch_file.id,
+        endpoint="/v1/chat/completions",
+        completion_window="24h",
+    )
+    log.info(
+        "Stage 1 batch: submitted batch_id=%s  chunks=%d  poll_interval=%ds",
+        batch.id, len(requests), config.llm.batch_poll_interval,
+    )
+
+    _TERMINAL = frozenset({"completed", "failed", "expired", "cancelled"})
+    deadline = time.time() + config.llm.batch_timeout
+
+    while batch.status not in _TERMINAL:
+        if time.time() > deadline:
+            log.error(
+                "Stage 1 batch: timed out after %ds waiting for batch %s",
+                config.llm.batch_timeout, batch.id,
+            )
+            return []
+        elapsed = int(time.time() - (deadline - config.llm.batch_timeout))
+        log.info(
+            "Stage 1 batch: status=%s  elapsed=%ds  batch_id=%s",
+            batch.status, elapsed, batch.id,
+        )
+        time.sleep(config.llm.batch_poll_interval)
+        batch = client.batches.retrieve(batch.id)
+
+    if batch.status != "completed":
+        log.error(
+            "Stage 1 batch: batch %s ended with status=%s", batch.id, batch.status,
+        )
+        return []
+
+    log.info("Stage 1 batch: batch %s completed", batch.id)
+
+    # Download and parse results
+    output_text = client.files.content(batch.output_file_id).text
+    partials: list[dict[str, Any]] = []
+    for line in output_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+            raw = entry["response"]["body"]["choices"][0]["message"]["content"] or ""
+        except (KeyError, IndexError, TypeError):
+            log.warning("Stage 1 batch: malformed result entry, skipping")
+            continue
+
+        # Same cleanup as LLMAdapter.complete_json
+        text = raw.strip()
+        if text.startswith("```"):
+            text = "\n".join(text.splitlines()[1:-1]).strip()
+        if text.startswith("---"):
+            text = text.lstrip("-").strip()
+
+        try:
+            partials.append(json.loads(text))
+        except json.JSONDecodeError:
+            log.warning("Stage 1 batch: non-JSON result: %r", raw[:120])
+
+    log.info(
+        "Stage 1 batch: parsed %d/%d results", len(partials), len(requests),
+    )
+    return partials
 
 
 def _chunk_spine(

@@ -57,6 +57,8 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
               help="Custom Ollama base URL (e.g. http://100.x.x.x:11434).")
 @click.option("--num-ctx", "num_ctx", default=None, type=int, envvar="COLOPHON_NUM_CTX",
               help="Ollama context window size in tokens (e.g. 262144).")
+@click.option("--use-batch", "use_batch", is_flag=True,
+              help="Use OpenAI Batch API (50% cheaper, up to 24h turnaround). Only valid for openai/ models.")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
               help="Write each repair report into this directory (default: alongside each EPUB).")
 def fix(
@@ -69,6 +71,7 @@ def fix(
     api_key: str | None,
     ollama_url: str | None,
     num_ctx: int | None,
+    use_batch: bool,
     report_dir: Path | None,
 ) -> None:
     """Repair one or more EPUB files."""
@@ -81,6 +84,8 @@ def fix(
         config.llm.api_base = ollama_url
     if num_ctx:
         config.llm.num_ctx = num_ctx
+    if use_batch:
+        config.llm.use_batch = True
 
     epub_files = _collect_epubs(inputs, batch)
     if not epub_files:
