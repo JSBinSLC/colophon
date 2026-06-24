@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -215,6 +216,36 @@ Rules:
 """
 
 
+def _call_with_backoff(
+    adapter: "LLMAdapter",
+    label: str,
+    user_msg: str,
+    max_retries: int = 5,
+) -> "dict | None":
+    """Call adapter.complete_json with exponential backoff on rate-limit errors."""
+    import litellm
+
+    delay = 15.0
+    for attempt in range(max_retries):
+        try:
+            return adapter.complete_json(_SYSTEM_PROMPT, user_msg)
+        except litellm.RateLimitError:
+            if attempt == max_retries - 1:
+                log.warning("Stage 1: %s hit rate limit, giving up after %d retries", label, max_retries)
+                return None
+            log.warning("Stage 1: %s rate-limited, retrying in %.0fs (attempt %d/%d)",
+                        label, delay, attempt + 1, max_retries)
+            time.sleep(delay)
+            delay = min(delay * 2, 120)
+        except ValueError as exc:
+            log.warning("Stage 1: %s returned non-JSON: %s", label, exc)
+            return None
+        except Exception as exc:
+            log.warning("Stage 1: %s failed (%s): %s", label, type(exc).__name__, exc)
+            return None
+    return None
+
+
 def _build_graph(
     adapter: LLMAdapter,
     config: PipelineConfig,
@@ -232,13 +263,9 @@ def _build_graph(
     for i, chunk in enumerate(chunks):
         label = f"chunk {i + 1}/{len(chunks)}"
         user_msg = f"Book passage ({label}):\n\n{chunk['text']}"
-        try:
-            raw = adapter.complete_json(_SYSTEM_PROMPT, user_msg)
-            partial_graphs.append(raw)
-        except ValueError as exc:
-            log.warning("Stage 1: chunk %d/%d returned non-JSON: %s", i + 1, len(chunks), exc)
-        except Exception as exc:
-            log.warning("Stage 1: chunk %d/%d failed (%s): %s", i + 1, len(chunks), type(exc).__name__, exc)
+        result = _call_with_backoff(adapter, label, user_msg)
+        if result is not None:
+            partial_graphs.append(result)
 
     graph = empty_graph(source_sha256, config.llm.model)
     if partial_graphs:
