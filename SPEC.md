@@ -71,7 +71,8 @@ Input EPUB
     ▼
 [Stage 1] Analysis — Build Semantic Graph  ◄── AI layer  [IMPLEMENTED]
     • Named entity extraction (NER via LLM; spaCy fallback planned)
-    • Variant spelling clustering (see "Variant Clustering" below)
+    • Variant spelling clustering — deterministic cluster-merge (see "Variant Clustering" below)
+    • Variant reconciliation pass — LLM, confidence-gated, for no-shared-substring aliases (Slavic naming) [planned]
     • Header/footer pattern detection (repeated strings near page boundaries) [planned]
     • Chapter boundary candidates (headings, dinkus patterns, topic shift) [advisory only — see note]
     • Page number marker inventory (existing epub:type="pagebreak" audit) [planned]
@@ -196,6 +197,31 @@ The graph's reason to exist is collapsing every surface form of an entity into o
 
 This pass is what turned a real run of *The Lost Years* from five separate "Kirk" records (252 + 227 + 133 + 61 + 4) into one. It is deterministic and LLM-free, so it is unit-tested directly (`tests/test_analysis.py`).
 
+### Hard case: Slavic naming (the Dostoevsky stress test)
+
+Russian (and broadly Slavic) novels are the boss-level test for variant clustering, and the single most common reason new readers lose track of who is who. One character carries many surface forms that share **no common substring**:
+
+- **Full formal:** Rodion Romanovich Raskolnikov
+- **Surname alone:** Raskolnikov
+- **First name:** Rodion
+- **Name + patronymic (polite address):** Rodion Romanovich
+- **Diminutives / hypocoristics:** Rodya, Rodka, Rodenka, Rodushka
+- **Family/intimate forms** that may not contain the root at all
+
+The same applies to *The Brothers Karamazov* (Dmitri → Mitya / Mitka / Mitenka; Alexei → Alyosha / Alyoshka; Fyodor Pavlovich), *War and Peace*, and *Anna Karenina*.
+
+**Why the current algorithm is not enough on its own.** The deterministic cluster-merge only links entries when one entry's *canonical* is a surface form of another. That works when chunks overlap on at least one shared string (the "Kirk" case). It will **fail** when two chunks independently emit, say, `{canonical: "Raskolnikov", variants: ["Rodion Romanovich"]}` and `{canonical: "Rodya", variants: ["Rodenka"]}` — there is no shared surface form, so they stay split. The semantic knowledge that *Rodya is a diminutive of Rodion* lives in the LLM, not in string overlap.
+
+**Planned mitigations (for Sonnet to implement, in priority order):**
+
+1. **Prompt hardening (cheap, do first).** Extend `_SYSTEM_PROMPT` with explicit Slavic-naming guidance: instruct the model to treat first name, patronymic, surname, and diminutives as variants of one person; to prefer the **fullest formal name** (`First Patronymic Surname`) as `canonical`; and to list *every* observed diminutive in `variants`. This pushes the hard semantic work to the LLM, where it belongs, and makes each chunk's output self-consistent.
+
+2. **LLM reconciliation pass (new Stage 1 sub-step).** After the deterministic cluster-merge, run **one** additional LLM call over just the merged entity list (names + variants + counts — small, cheap, one request) asking: "Which of these records refer to the same individual? Return groups of canonical names to merge." Apply the returned groupings with the same merge math (sum occurrences, union variants, pick fullest/most-frequent canonical). This catches the no-shared-substring case the deterministic pass cannot. It must be **confidence-gated**: only auto-merge HIGH-confidence groupings; flag the rest in the repair report for review rather than silently fusing two characters.
+
+3. **Hints seeding.** Let `hints.character_names` accept grouped aliases (e.g. `[["Rodion Romanovich Raskolnikov", "Raskolnikov", "Rodya", "Rodenka"]]`) so a reader who knows the book can pin ground truth before analysis. Seeded groups are treated as HIGH confidence and bypass the reconciliation gate.
+
+**Guardrail:** over-clustering (fusing two real people) is worse than under-clustering (leaving a stray alias), because Stage 3 would then rewrite one character's name onto another's lines. The reconciliation pass must bias toward *flag, don't merge* whenever confidence is below HIGH. This trade-off should be unit-tested with hand-labeled Russian fixtures.
+
 > **Known limitation:** `chapters` in the graph are **advisory**. The LLM only sees chunk text, not real spine filenames, so `chapter.spine_item` is unreliable and chapters are deduplicated by title only. **Stage 4 (chapter detection) / Stage 5 (TOC rebuild) must derive the real chapter→file mapping deterministically** from spine order and in-document headings, treating Stage 1's chapter titles as hints, not ground truth. Likewise `_extract_spine_texts` currently keys hrefs by filename (`path.name`); the full OPF-relative href is needed for correct mapping and should be captured when Stage 5 redoes extraction.
 
 ---
@@ -263,7 +289,7 @@ colophon/
 |---|---|
 | **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, basic HTML repair, TOC rebuild |
 | **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
-| **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1), proper noun consistency application (Stage 3), Calibre plugin alpha |
+| **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1); **LLM reconciliation pass** for no-shared-substring aliases (Slavic naming), confidence-gated; Russian-novel stress fixtures + cluster purity/completeness scoring; proper noun consistency application (Stage 3); Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
 | **v0.5 — CSS + EPUB 2→3 Upgrade** | CSS sanitization, optional EPUB version upgrade path |
 | **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable |
@@ -352,6 +378,37 @@ colophon tournament --add-model ollama/gemma4:26b-mlx-bf16 \
 - Emit a Markdown summary table for human review
 
 Ground truth files are committed to the repo (they are hand-labeled metadata, not copyrighted content).
+
+### Variant-clustering stress fixtures (Russian novels)
+
+A dedicated subset of fixtures targets the Slavic-naming hard case described under **Variant Clustering**. Candidates from the maintainer's library:
+
+| Slug | Work | Why it's brutal |
+|---|---|---|
+| `crime-and-punishment` | Dostoevsky | Raskolnikov = Rodion Romanovich = Rodya = Rodka = Rodenka |
+| `brothers-karamazov` | Dostoevsky | Three brothers, each with a full name + patronymic + multiple diminutives |
+| `war-and-peace` | Tolstoy | Huge cast, French/Russian code-switching, nicknames (Natasha, Andrei, Pierre/Pyotr) |
+| `anna-karenina` | Tolstoy | Formal vs. intimate address shifts mid-scene |
+
+**Ground-truth format for these fixtures** records alias *groups*, not just flat names, so "variant cluster accuracy" can be scored precisely:
+
+```json
+{
+  "characters": [
+    {
+      "canonical": "Rodion Romanovich Raskolnikov",
+      "aliases": ["Raskolnikov", "Rodion", "Rodion Romanovich", "Rodya", "Rodka", "Rodenka"]
+    }
+  ]
+}
+```
+
+**Scoring additions for these fixtures:**
+- **Cluster purity** — penalize any cluster that mixes two ground-truth people (over-clustering; the dangerous failure).
+- **Cluster completeness** — reward aliases correctly pulled into the right cluster (under-clustering is the safe failure).
+- A regression gate: the default model + reconciliation pass must keep **cluster purity = 1.0** (never fuse two real characters) even if completeness lags.
+
+These fixtures also become the acceptance test for the **LLM reconciliation pass** (Stage 1 mitigation #2): without it, the deterministic merge is expected to leave diminutives stranded; with it, completeness should climb while purity stays at 1.0.
 
 ---
 
