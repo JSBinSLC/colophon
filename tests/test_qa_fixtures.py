@@ -278,9 +278,270 @@ def test_emphyrio_roundtrip():
 # Cross-cutting: every fixture survives a round-trip without gaining NEW errors
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# 11. Aldous Huxley — Brave New World  (NCX005: empty navMap)
+# ---------------------------------------------------------------------------
+
+BRAVE_NEW_WORLD = "brave-new-world.epub"
+
+
+@_skipif(BRAVE_NEW_WORLD)
+def test_brave_new_world_has_empty_navmap():
+    assert "NCX005" in _issue_codes(_fixture(BRAVE_NEW_WORLD))
+
+
+@_skipif(BRAVE_NEW_WORLD)
+def test_brave_new_world_roundtrip():
+    out = _roundtrip(_fixture(BRAVE_NEW_WORLD))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 12. Isaac Asimov — I, Robot  (NCX005: empty navMap, anthology)
+# ---------------------------------------------------------------------------
+
+I_ROBOT = "i-robot.epub"
+
+
+@_skipif(I_ROBOT)
+def test_i_robot_has_empty_navmap():
+    assert "NCX005" in _issue_codes(_fixture(I_ROBOT))
+
+
+@_skipif(I_ROBOT)
+def test_i_robot_roundtrip():
+    out = _roundtrip(_fixture(I_ROBOT))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 13. Plato — The Republic  (NCX005: empty navMap, spine=15, classics)
+# ---------------------------------------------------------------------------
+
+THE_REPUBLIC = "the-republic.epub"
+
+
+@_skipif(THE_REPUBLIC)
+def test_the_republic_has_empty_navmap():
+    assert "NCX005" in _issue_codes(_fixture(THE_REPUBLIC))
+
+
+@_skipif(THE_REPUBLIC)
+def test_the_republic_roundtrip():
+    out = _roundtrip(_fixture(THE_REPUBLIC))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 14. Alexander Hamilton — The Federalist Papers  (NCX005: empty navMap, non-fiction)
+# ---------------------------------------------------------------------------
+
+FEDERALIST = "federalist-papers.epub"
+
+
+@_skipif(FEDERALIST)
+def test_federalist_has_empty_navmap():
+    assert "NCX005" in _issue_codes(_fixture(FEDERALIST))
+
+
+@_skipif(FEDERALIST)
+def test_federalist_roundtrip():
+    out = _roundtrip(_fixture(FEDERALIST))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 15. Richard Holmes — The Age of Wonder  (NCX001 + OPF009: missing toc attr)
+# ---------------------------------------------------------------------------
+
+AGE_OF_WONDER = "age-of-wonder.epub"
+
+
+@_skipif(AGE_OF_WONDER)
+def test_age_of_wonder_has_ncx001():
+    assert "NCX001" in _issue_codes(_fixture(AGE_OF_WONDER))
+
+
+@_skipif(AGE_OF_WONDER)
+def test_age_of_wonder_roundtrip():
+    out = _roundtrip(_fixture(AGE_OF_WONDER))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 16. Douglas Adams — So Long, and Thanks for All the Fish  (NCX001 + OPF009)
+# ---------------------------------------------------------------------------
+
+SO_LONG = "so-long-thanks.epub"
+
+
+@_skipif(SO_LONG)
+def test_so_long_has_ncx001():
+    assert "NCX001" in _issue_codes(_fixture(SO_LONG))
+
+
+@_skipif(SO_LONG)
+def test_so_long_roundtrip():
+    out = _roundtrip(_fixture(SO_LONG))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 17. Hans Schantz — The Hidden Truth  (NAV003: EPUB 3 nav not well-formed XML)
+# ---------------------------------------------------------------------------
+
+HIDDEN_TRUTH = "hidden-truth.epub"
+
+
+@_skipif(HIDDEN_TRUTH)
+def test_hidden_truth_has_nav003():
+    assert "NAV003" in _issue_codes(_fixture(HIDDEN_TRUTH))
+
+
+@_skipif(HIDDEN_TRUTH)
+def test_hidden_truth_roundtrip():
+    out = _roundtrip(_fixture(HIDDEN_TRUTH))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 18. Jon Mollison — Sudden Rescue  (NAV003: EPUB 3 nav not well-formed XML)
+# ---------------------------------------------------------------------------
+
+SUDDEN_RESCUE = "sudden-rescue.epub"
+
+
+@_skipif(SUDDEN_RESCUE)
+def test_sudden_rescue_has_nav003():
+    assert "NAV003" in _issue_codes(_fixture(SUDDEN_RESCUE))
+
+
+@_skipif(SUDDEN_RESCUE)
+def test_sudden_rescue_roundtrip():
+    out = _roundtrip(_fixture(SUDDEN_RESCUE))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 19. Lee Smith — The Plot Against the President  (NAV003: nav completely malformed)
+# ---------------------------------------------------------------------------
+
+PLOT_AGAINST = "plot-against-president.epub"
+
+
+@_skipif(PLOT_AGAINST)
+def test_plot_against_has_nav003():
+    assert "NAV003" in _issue_codes(_fixture(PLOT_AGAINST))
+
+
+@_skipif(PLOT_AGAINST)
+def test_plot_against_roundtrip():
+    out = _roundtrip(_fixture(PLOT_AGAINST))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 20. Victor Hugo — Les Misérables (French)  (NCX008 + OPF009, 422 spine items)
+# ---------------------------------------------------------------------------
+
+LES_MISERABLES = "les-miserables-fr.epub"
+
+
+@_skipif(LES_MISERABLES)
+def test_les_miserables_has_defects():
+    codes = _issue_codes(_fixture(LES_MISERABLES))
+    assert codes & {"NCX008", "OPF009"}, f"Expected NCX008 or OPF009, got: {codes}"
+
+
+@_skipif(LES_MISERABLES)
+def test_les_miserables_roundtrip():
+    out = _roundtrip(_fixture(LES_MISERABLES))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 21. Alexandre Dumas — Le Vicomte de Bragelonne  (NCX008, 271 spine items)
+# ---------------------------------------------------------------------------
+
+BRAGELONNE = "le-vicomte-bragelonne.epub"
+
+
+@_skipif(BRAGELONNE)
+def test_bragelonne_has_incomplete_toc():
+    assert "NCX008" in _issue_codes(_fixture(BRAGELONNE))
+
+
+@_skipif(BRAGELONNE)
+def test_bragelonne_roundtrip():
+    out = _roundtrip(_fixture(BRAGELONNE))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 22. Walter Isaacson — Elon Musk  (OPF009×6, EPUB 3, 198-item spine)
+# ---------------------------------------------------------------------------
+
+ELON_MUSK = "elon-musk.epub"
+
+
+@_skipif(ELON_MUSK)
+def test_elon_musk_has_media_type_issues():
+    assert "OPF009" in _issue_codes(_fixture(ELON_MUSK))
+
+
+@_skipif(ELON_MUSK)
+def test_elon_musk_roundtrip():
+    out = _roundtrip(_fixture(ELON_MUSK))
+    try:
+        assert zipfile.is_zipfile(out)
+    finally:
+        out.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Cross-cutting: every fixture survives a round-trip without gaining NEW errors
+# ---------------------------------------------------------------------------
+
 ALL_FIXTURES = [
     MEN_RETURN, DOGTOWN, FRANNY, TEACHINGS, LOSER,
     ALLANON, LINCOLN, PARADEISIA, MOSES, EMPHYRIO,
+    BRAVE_NEW_WORLD, I_ROBOT, THE_REPUBLIC, FEDERALIST,
+    AGE_OF_WONDER, SO_LONG,
+    HIDDEN_TRUTH, SUDDEN_RESCUE, PLOT_AGAINST,
+    LES_MISERABLES, BRAGELONNE, ELON_MUSK,
 ]
 
 
