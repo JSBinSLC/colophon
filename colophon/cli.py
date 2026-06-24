@@ -53,6 +53,10 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
 @click.option("--llm", "llm_model", default=None, help="LLM model (e.g. anthropic/claude-haiku-4-5).")
 @click.option("--api-key", "api_key", default=None, envvar="ANTHROPIC_API_KEY",
               help="Anthropic API key. Prefer setting ANTHROPIC_API_KEY in .env instead.")
+@click.option("--ollama-url", "ollama_url", default=None, envvar="COLOPHON_OLLAMA_URL",
+              help="Custom Ollama base URL (e.g. http://100.x.x.x:11434).")
+@click.option("--num-ctx", "num_ctx", default=None, type=int, envvar="COLOPHON_NUM_CTX",
+              help="Ollama context window size in tokens (e.g. 262144).")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
               help="Write each repair report into this directory (default: alongside each EPUB).")
 def fix(
@@ -63,6 +67,8 @@ def fix(
     rebuild_graph: bool,
     llm_model: str | None,
     api_key: str | None,
+    ollama_url: str | None,
+    num_ctx: int | None,
     report_dir: Path | None,
 ) -> None:
     """Repair one or more EPUB files."""
@@ -71,6 +77,10 @@ def fix(
         config.llm.model = llm_model
     if api_key:
         config.llm.api_key = api_key
+    if ollama_url:
+        config.llm.api_base = ollama_url
+    if num_ctx:
+        config.llm.num_ctx = num_ctx
 
     epub_files = _collect_epubs(inputs, batch)
     if not epub_files:

@@ -1,15 +1,14 @@
 """LiteLLM wrapper — single call site for all LLM interactions in Colophon.
 
 Supports any provider LiteLLM understands:
-  - anthropic/claude-haiku-4-5       (default; cloud)
-  - anthropic/claude-sonnet-4-6      (larger context headroom)
-  - ollama/gemma3:12b                 (local; no key required)
+  - anthropic/claude-haiku-4-5       (default; cloud, 200K context)
+  - anthropic/claude-sonnet-4-6      (cloud, larger context headroom)
+  - ollama/gemma4:26b-mlx-bf16       (local/Tailnet Ollama, set api_base + num_ctx)
+  - ollama/gemma3:12b                 (local Ollama, no key required)
   - ollama/mistral                    (local fallback)
 
-The caller passes a PipelineConfig and the adapter resolves credentials
-from config.llm.resolved_api_key(), which checks the explicit field first
-and falls back to ANTHROPIC_API_KEY from the environment (loaded from .env
-by cli.py at startup).
+Custom Ollama endpoints (e.g. a Mac Studio on your Tailnet):
+  Set api_base="http://100.x.x.x:11434" and num_ctx=262144 in LLMConfig.
 """
 from __future__ import annotations
 
@@ -24,7 +23,6 @@ from colophon.config import LLMConfig
 class LLMAdapter:
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = cfg
-        # Suppress litellm's verbose success/failure logging.
         litellm.set_verbose = False  # type: ignore[attr-defined]
 
     def complete(self, system: str, user: str) -> str:
@@ -40,6 +38,12 @@ class LLMAdapter:
         }
         if api_key:
             kwargs["api_key"] = api_key
+        if self._cfg.api_base:
+            kwargs["api_base"] = self._cfg.api_base
+        # Ollama-specific: override the model's built-in context window.
+        # LiteLLM forwards num_ctx into the options dict for Ollama requests.
+        if self._cfg.num_ctx is not None:
+            kwargs["num_ctx"] = self._cfg.num_ctx
 
         response = litellm.completion(**kwargs)
         return response.choices[0].message.content or ""
@@ -50,11 +54,9 @@ class LLMAdapter:
         Raises ValueError if the model returns non-JSON text.
         """
         raw = self.complete(system, user)
-        # Strip markdown code fences if the model wrapped the JSON.
         text = raw.strip()
         if text.startswith("```"):
             lines = text.splitlines()
-            # Drop first line (```json or ```) and last line (```)
             text = "\n".join(lines[1:-1]).strip()
         try:
             return json.loads(text)

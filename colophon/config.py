@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 
 class LLMConfig(BaseModel):
     model: str = "anthropic/claude-haiku-4-5"
-    api_key: str | None = None  # None = read from ANTHROPIC_API_KEY env var
+    api_key: str | None = None      # None = read from ANTHROPIC_API_KEY env var
+    api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
+    num_ctx: int | None = None      # Ollama context window override (tokens)
     timeout: int = 120
 
     def resolved_api_key(self) -> str | None:

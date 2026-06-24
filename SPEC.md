@@ -272,6 +272,64 @@ This doesn't require fine-tuning or LoRA. It's a **retrieval problem disguised a
 
 ---
 
+## Model Tournament QA
+
+To validate LLM quality across providers and hardware tiers, the test suite includes a tournament harness. The goal: run the same repair task against multiple models and score the output objectively, so we know which model is best for which task before committing it as the default.
+
+### Tournament design
+
+Each tournament run:
+1. Takes a fixture EPUB with known defects
+2. Runs Stage 1 (analysis / book graph extraction) with each candidate model
+3. Scores each model's `book_graph.json` output against a hand-labeled ground truth JSON
+4. Optionally runs a full pipeline pass and scores the repaired EPUB on the same rubric
+5. Emits a `tournament_results.json` with per-model scores, latency, and token cost
+
+### Scoring rubric (Stage 1)
+
+| Metric | Weight | How measured |
+|---|---|---|
+| Character recall | 30% | % of ground-truth characters found |
+| Character precision | 20% | % of extracted characters that are real (no hallucinations) |
+| Variant cluster accuracy | 20% | % of known variant groups correctly merged |
+| Chapter boundary F1 | 20% | Precision × recall on known chapter split points |
+| JSON schema compliance | 10% | Does the output parse and validate against the schema? |
+
+### Candidate models (initial tournament set)
+
+| Model | Provider | Context | Notes |
+|---|---|---|---|
+| `gemma4:26b-mlx-bf16` | Ollama / Mac Studio (Tailnet) | 262K | Primary local candidate; 256 GB unified memory |
+| `gemma3:12b` | Ollama local | 128K | Lower-resource local fallback |
+| `claude-haiku-4-5` | Anthropic API | 200K | Cloud default; cheap per token |
+| `claude-sonnet-4-6` | Anthropic API | 200K | Cloud quality tier |
+
+### CLI usage
+
+```bash
+# Run tournament on a single fixture against all configured models
+colophon tournament tests/fixtures/the-lost-years.epub
+
+# Run tournament on all fixtures, write results to a directory
+colophon tournament tests/fixtures/ --batch --results-dir tournament_results/
+
+# Add a model to the tournament roster (stored in config)
+colophon tournament --add-model ollama/gemma4:26b-mlx-bf16 \
+    --ollama-url http://100.122.243.79:11434 --num-ctx 262144
+```
+
+### Test suite integration
+
+`tests/test_tournament.py` will:
+- Skip automatically if `COLOPHON_TOURNAMENT=1` is not set (prevents slow LLM calls in normal CI)
+- Load ground-truth labels from `tests/fixtures/ground_truth/<fixture_stem>.json`
+- Assert that the default model scores ≥ 0.70 on character recall (regression gate)
+- Emit a Markdown summary table for human review
+
+Ground truth files are committed to the repo (they are hand-labeled metadata, not copyrighted content).
+
+---
+
 ## Open Questions
 
 - Calibre plugin architecture: full plugin vs. subprocess wrapper for v0.3?
