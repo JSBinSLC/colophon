@@ -107,11 +107,14 @@ Input EPUB
     • Split single-file books into per-chapter HTML files
     │
     ▼
-[Stage 5] TOC & Spine Reconstruction
-    • Generate toc.ncx (EPUB 2 compatibility)
-    • Generate nav.xhtml (EPUB 3), including page-list nav
-    • Rebuild content.opf spine and manifest
-    • Validate page break markers (epub:type="pagebreak"), insert missing ones if page list exists
+[Stage 5] TOC & Spine Reconstruction  [IMPLEMENTED]
+    • Scan each spine HTML file for h1/h2 headings and chapter-pattern lines
+    • Build chapter→file mapping (deterministic; Stage 1 titles are advisory hints only)
+    • Generate toc.ncx (EPUB 2 compatibility) — fixes NCX001, NCX005, NCX008
+    • Generate nav.xhtml (EPUB 3) with epub:type="toc" — fixes NAV003, NAV004
+    • Update content.opf: spine toc attribute, manifest NCX/nav entries
+    • Fallback: when no headings found, include every spine item with generic titles
+    • Future: page-list nav, epub:type="pagebreak" marker audit
     │
     ▼
 [Stage 6] CSS Sanitization
@@ -152,7 +155,7 @@ Colophon uses **LiteLLM** as the AI abstraction layer, giving users a single con
 
 - Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`) — **current default for Stage 1** (`anthropic/claude-haiku-4-5`)
 - Local models via Ollama (`gemma3:12b`, `mistral`, etc.) — no API key; custom endpoints (e.g. Tailnet Mac Studio) via `--ollama-url` + `--num-ctx`
-- OpenAI (`gpt-4o-mini`, etc.) — planned candidate for the tournament
+- OpenAI (`gpt-4o-mini`, `gpt-4.1-mini`, or any current cheap tier) — set `OPENAI_API_KEY` in `.env` and use `--llm openai/<model-id>`; provider routing is automatic
 - Any other LiteLLM-supported provider
 
 The LLM is **enhancing** decisions made by deterministic stages, not replacing them. If no LLM is configured, Colophon falls back to spaCy + regex for NER and chapter detection. The LLM accelerates and improves confidence; it is never a hard dependency for core repair.
@@ -274,11 +277,11 @@ colophon/
 ├── pipeline.py             # Stage orchestration
 ├── stages/
 │   ├── unpack.py           # Stage 0
-│   ├── analysis.py         # Stage 1 — builds the semantic book graph (the AI spine; IMPLEMENTED)
+│   │   ├── analysis.py         # Stage 1 — builds the semantic book graph (IMPLEMENTED)
 │   ├── html_repair.py      # Stage 2
 │   ├── text_cleanup.py     # Stage 3
 │   ├── chapter_detect.py   # Stage 4
-│   ├── toc_rebuild.py      # Stage 5
+│   ├── toc_rebuild.py      # Stage 5 — TOC & spine reconstruction (IMPLEMENTED)
 │   ├── css_sanitize.py     # Stage 6
 │   └── repack.py           # Stage 7
 ├── models/                 # Optional AI model adapters
@@ -306,7 +309,7 @@ colophon/
 
 | Milestone | Scope |
 |---|---|
-| **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, basic HTML repair, TOC rebuild |
+| **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, DRM gating ✅, TOC rebuild ✅, basic HTML repair |
 | **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
 | **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1); **LLM reconciliation pass** for no-shared-substring aliases (Slavic naming), confidence-gated; Russian-novel stress fixtures + cluster purity/completeness scoring; proper noun consistency application (Stage 3); Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |

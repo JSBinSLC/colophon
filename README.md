@@ -10,7 +10,17 @@ colophon fix book.epub
 
 ## Status
 
-Early development. See [SPEC.md](SPEC.md) for full design.
+Active development (v0.1). Working stages:
+
+| Stage | Status | What it does |
+|---|---|---|
+| Stage 0 — Unpack & Validate | ✅ | ZIP extraction, built-in EPUB validator, DRM gate |
+| Stage 1 — Semantic Graph | ✅ | NER via LLM (Anthropic/OpenAI/Ollama), variant clustering, graph cache |
+| Stage 5 — TOC Rebuild | ✅ | Generates toc.ncx + nav.xhtml from in-document headings; fixes NCX001/NCX005/NCX008/NAV003/NAV004 |
+| Stage 7 — Repack | ✅ | Correct mimetype ordering, re-validation, repair report |
+| Stages 2–4, 6 | Planned | HTML repair, text cleanup, chapter detection, CSS sanitization |
+
+See [SPEC.md](SPEC.md) for full design and roadmap.
 
 ## Prerequisites
 

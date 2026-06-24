@@ -5,16 +5,32 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
+_PROVIDER_ENV_KEY: dict[str, str] = {
+    "anthropic/": "ANTHROPIC_API_KEY",
+    "openai/":    "OPENAI_API_KEY",
+}
+
+
 class LLMConfig(BaseModel):
     model: str = "anthropic/claude-haiku-4-5"
-    api_key: str | None = None      # None = read from ANTHROPIC_API_KEY env var
+    api_key: str | None = None      # None = read from provider env var
     api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
     num_ctx: int | None = None      # Ollama context window override (tokens)
     timeout: int = 600
 
     def resolved_api_key(self) -> str | None:
-        """Return the API key, preferring the explicit value over the env var."""
-        return self.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        """Return the API key for the configured provider.
+
+        Explicit api_key wins. Otherwise looks up the provider-specific env var
+        (ANTHROPIC_API_KEY for anthropic/ models, OPENAI_API_KEY for openai/
+        models). Ollama models need no key — returns None.
+        """
+        if self.api_key:
+            return self.api_key
+        for prefix, env_var in _PROVIDER_ENV_KEY.items():
+            if self.model.startswith(prefix):
+                return os.environ.get(env_var)
+        return None
 
 
 class HintsConfig(BaseModel):

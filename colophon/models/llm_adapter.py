@@ -1,11 +1,12 @@
 """LiteLLM wrapper — single call site for all LLM interactions in Colophon.
 
 Supports any provider LiteLLM understands:
-  - anthropic/claude-haiku-4-5       (default; cloud, 200K context)
+  - anthropic/claude-haiku-4-5       (default; cloud, 200K context, ~$0.15/novel)
   - anthropic/claude-sonnet-4-6      (cloud, larger context headroom)
+  - openai/gpt-4o-mini               (cloud; ~6x cheaper than Haiku; set OPENAI_API_KEY)
+  - openai/gpt-4.1-mini              (cloud; newer GPT mini tier)
   - ollama/gemma4:26b-mlx-bf16       (local/Tailnet Ollama, set api_base + num_ctx)
   - ollama/gemma3:12b                 (local Ollama, no key required)
-  - ollama/mistral                    (local fallback)
 
 Custom Ollama endpoints (e.g. a Mac Studio on your Tailnet):
   Set api_base="http://100.x.x.x:11434" and num_ctx=262144 in LLMConfig.
