@@ -59,6 +59,21 @@ Source: Calibre 0.8.8 export, circa 2011
 | `le-vicomte-bragelonne.epub` | NCX008 | **271 spine items** — large-spine stress test |
 | `elon-musk.epub` | OPF009 | EPUB 3; spine=198; large modern non-fiction |
 
+#### Variant-clustering stress fixtures (Russian novels)
+
+These exist to battle-test Stage 1 variant clustering against Slavic naming
+(full name + patronymic + surname + diminutives that share no substring).
+They also carry NCX008, so they double as TOC-rebuild fixtures. See SPEC.md
+→ "Hard case: Slavic naming". Ground truth (grouped aliases) will live in
+`ground_truth/<slug>.json` and must be hand-verified independently of any
+in-book cast list.
+
+| Filename | Defect codes | Notes |
+|---|---|---|
+| `crime-and-punishment.epub` | NCX008 | Raskolnikov = Rodion Romanovich = Rodya = Rodka = Rodenka |
+| `brothers-karamazov.epub` | NCX008 | three brothers, each with full name + patronymic + diminutives |
+| `war-and-peace.epub` | NCX008 | huge cast, French/Russian code-switching, nicknames |
+
 #### Defect code coverage
 
 | Code | Meaning | Covered by |

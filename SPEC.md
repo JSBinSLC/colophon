@@ -214,11 +214,15 @@ The same applies to *The Brothers Karamazov* (Dmitri → Mitya / Mitka / Mitenka
 
 **Planned mitigations (for Sonnet to implement, in priority order):**
 
-1. **Prompt hardening (cheap, do first).** Extend `_SYSTEM_PROMPT` with explicit Slavic-naming guidance: instruct the model to treat first name, patronymic, surname, and diminutives as variants of one person; to prefer the **fullest formal name** (`First Patronymic Surname`) as `canonical`; and to list *every* observed diminutive in `variants`. This pushes the hard semantic work to the LLM, where it belongs, and makes each chunk's output self-consistent.
+1. **Cast-of-characters / dramatis personae detection (the best free ground truth).** Many novels — especially the Russian classics — ship an author- or editor-curated character list in the front or back matter ("Principal Characters", "Cast of Characters", "Dramatis Personae"). When present, this is the **authoritative seed**: parse it during Stage 1 (detect the section by heading + list structure, then have the LLM extract `{canonical, aliases}` from just that short section) and treat the result like HIGH-confidence hints — entities matching a cast entry adopt its canonical/alias grouping directly. Detection should be robust to placement (front *or* back) and to formats (definition list, bulleted list, "Name — description" lines). When **no** cast list is found, fall back to mitigations 2–3 (the LLM's world knowledge of naming conventions). *Scope note: a missing/garbled cast list must never error the pipeline — it is an optional accelerator, not a dependency.*
 
-2. **LLM reconciliation pass (new Stage 1 sub-step).** After the deterministic cluster-merge, run **one** additional LLM call over just the merged entity list (names + variants + counts — small, cheap, one request) asking: "Which of these records refer to the same individual? Return groups of canonical names to merge." Apply the returned groupings with the same merge math (sum occurrences, union variants, pick fullest/most-frequent canonical). This catches the no-shared-substring case the deterministic pass cannot. It must be **confidence-gated**: only auto-merge HIGH-confidence groupings; flag the rest in the repair report for review rather than silently fusing two characters.
+2. **Prompt hardening (cheap, do alongside #1).** Extend `_SYSTEM_PROMPT` with explicit Slavic-naming guidance: instruct the model to treat first name, patronymic, surname, and diminutives as variants of one person; to prefer the **fullest formal name** (`First Patronymic Surname`) as `canonical`; and to list *every* observed diminutive in `variants`. This pushes the hard semantic work to the LLM, where it belongs, and makes each chunk's output self-consistent.
 
-3. **Hints seeding.** Let `hints.character_names` accept grouped aliases (e.g. `[["Rodion Romanovich Raskolnikov", "Raskolnikov", "Rodya", "Rodenka"]]`) so a reader who knows the book can pin ground truth before analysis. Seeded groups are treated as HIGH confidence and bypass the reconciliation gate.
+3. **LLM reconciliation pass (new Stage 1 sub-step).** After the deterministic cluster-merge, run **one** additional LLM call over just the merged entity list (names + variants + counts — small, cheap, one request) asking: "Which of these records refer to the same individual? Return groups of canonical names to merge." Apply the returned groupings with the same merge math (sum occurrences, union variants, pick fullest/most-frequent canonical). This catches the no-shared-substring case the deterministic pass cannot, and is where the LLM's world knowledge fills the gap when no cast list exists. It must be **confidence-gated**: only auto-merge HIGH-confidence groupings; flag the rest in the repair report for review rather than silently fusing two characters.
+
+4. **Hints seeding.** Let `hints.character_names` accept grouped aliases (e.g. `[["Rodion Romanovich Raskolnikov", "Raskolnikov", "Rodya", "Rodenka"]]`) so a reader who knows the book can pin ground truth before analysis. Seeded groups are treated as HIGH confidence and bypass the reconciliation gate.
+
+**Source-of-truth precedence** (highest first): user hints (#4) → parsed cast list (#1) → LLM reconciliation (#3) → bare deterministic merge. A higher source always wins a conflict, and anything resolved only at the reconciliation level or below stays subject to the flag-don't-merge confidence gate.
 
 **Guardrail:** over-clustering (fusing two real people) is worse than under-clustering (leaving a stray alias), because Stage 3 would then rewrite one character's name onto another's lines. The reconciliation pass must bias toward *flag, don't merge* whenever confidence is below HIGH. This trade-off should be unit-tested with hand-labeled Russian fixtures.
 
@@ -383,12 +387,12 @@ Ground truth files are committed to the repo (they are hand-labeled metadata, no
 
 A dedicated subset of fixtures targets the Slavic-naming hard case described under **Variant Clustering**. Candidates from the maintainer's library:
 
-| Slug | Work | Why it's brutal |
-|---|---|---|
-| `crime-and-punishment` | Dostoevsky | Raskolnikov = Rodion Romanovich = Rodya = Rodka = Rodenka |
-| `brothers-karamazov` | Dostoevsky | Three brothers, each with a full name + patronymic + multiple diminutives |
-| `war-and-peace` | Tolstoy | Huge cast, French/Russian code-switching, nicknames (Natasha, Andrei, Pierre/Pyotr) |
-| `anna-karenina` | Tolstoy | Formal vs. intimate address shifts mid-scene |
+| Slug | Work | Status | Why it's brutal |
+|---|---|---|---|
+| `crime-and-punishment.epub` | Dostoevsky | ✅ in fixtures (also NCX008) | Raskolnikov = Rodion Romanovich = Rodya = Rodka = Rodenka |
+| `brothers-karamazov.epub` | Dostoevsky | ✅ in fixtures (also NCX008) | Three brothers, each with a full name + patronymic + multiple diminutives (Dmitri → Mitya/Mitka/Mitenka; Alexei → Alyosha) |
+| `war-and-peace.epub` | Tolstoy | ✅ in fixtures (also NCX008) | Huge cast, French/Russian code-switching, nicknames (Natasha, Andrei, Pierre/Pyotr) |
+| `anna-karenina.epub` | Tolstoy | candidate (not yet added) | Formal vs. intimate address shifts mid-scene |
 
 **Ground-truth format for these fixtures** records alias *groups*, not just flat names, so "variant cluster accuracy" can be scored precisely:
 
@@ -408,7 +412,9 @@ A dedicated subset of fixtures targets the Slavic-naming hard case described und
 - **Cluster completeness** — reward aliases correctly pulled into the right cluster (under-clustering is the safe failure).
 - A regression gate: the default model + reconciliation pass must keep **cluster purity = 1.0** (never fuse two real characters) even if completeness lags.
 
-These fixtures also become the acceptance test for the **LLM reconciliation pass** (Stage 1 mitigation #2): without it, the deterministic merge is expected to leave diminutives stranded; with it, completeness should climb while purity stays at 1.0.
+These fixtures also become the acceptance test for the **LLM reconciliation pass** (Stage 1 mitigation #3): without it, the deterministic merge is expected to leave diminutives stranded; with it, completeness should climb while purity stays at 1.0.
+
+> **Scoring independence:** the committed ground-truth JSON is hand-verified, not auto-generated from the book's own cast list. Since cast-of-characters detection (mitigation #1) lets the model *see* that list, scoring its output against ground truth derived from the same list would be circular. Hand-label (a cast list may be a convenient *starting point* for the labeler, but the committed truth must be independently checked). To measure mitigation #1's contribution honestly, also run each Russian fixture with cast detection disabled and report the delta.
 
 ---
 
