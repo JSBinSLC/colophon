@@ -58,6 +58,9 @@ class LLMAdapter:
         if text.startswith("```"):
             lines = text.splitlines()
             text = "\n".join(lines[1:-1]).strip()
+        # Some models prefix JSON with a markdown horizontal rule (---).
+        if text.startswith("---"):
+            text = text.lstrip("-").strip()
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:

@@ -34,8 +34,11 @@ GRAPH_SCHEMA_VERSION = "1"
 
 # Approximate characters per token (conservative for prose).
 CHARS_PER_TOKEN = 4
-# Reserve tokens for system prompt + response.
+# Reserve tokens for system prompt + JSON response output.
 PROMPT_OVERHEAD_TOKENS = 4000
+# Hard cap per chunk: ~8K tokens of input regardless of context window size.
+# Keeps JSON output from being truncated on large-context models.
+MAX_CHUNK_CHARS = 32_000
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +223,8 @@ def _build_graph(
 ) -> dict[str, Any]:
     """Run LLM analysis over all spine items (chunked if needed) and merge."""
     max_tokens = config.llm.num_ctx or 8192
-    usable_chars = (max_tokens - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
+    context_chars = (max_tokens - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
+    usable_chars = min(context_chars, MAX_CHUNK_CHARS)
 
     chunks = _chunk_spine(spine_texts, usable_chars)
     partial_graphs: list[dict[str, Any]] = []
