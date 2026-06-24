@@ -8,6 +8,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from colophon.config import PipelineConfig
 from colophon.report import RepairReport
 from colophon.stages.unpack import UnpackStage
+from colophon.stages.analysis import AnalysisStage
 from colophon.stages.html_repair import HtmlRepairStage
 from colophon.stages.text_cleanup import TextCleanupStage
 from colophon.stages.chapter_detect import ChapterDetectStage
@@ -23,6 +24,7 @@ def run(epub_path: Path, config: PipelineConfig) -> RepairReport:
 
     stages = [
         UnpackStage(),
+        AnalysisStage(),
         HtmlRepairStage(),
         TextCleanupStage(),
         ChapterDetectStage(),
