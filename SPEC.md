@@ -69,13 +69,13 @@ Input EPUB
     • Detect EPUB version (2 or 3), flag for optional upgrade
     │
     ▼
-[Stage 1] Analysis — Build Semantic Graph  ◄── AI layer
-    • Named entity extraction (NER via spaCy or LLM)
-    • Variant spelling clustering
-    • Header/footer pattern detection (repeated strings near page boundaries)
-    • Chapter boundary candidates (headings, dinkus patterns, topic shift)
-    • Page number marker inventory (existing epub:type="pagebreak" audit)
-    • Output: book_graph.json (written to temp dir; stages 2–4 read it at startup to drive repair decisions)
+[Stage 1] Analysis — Build Semantic Graph  ◄── AI layer  [IMPLEMENTED]
+    • Named entity extraction (NER via LLM; spaCy fallback planned)
+    • Variant spelling clustering (see "Variant Clustering" below)
+    • Header/footer pattern detection (repeated strings near page boundaries) [planned]
+    • Chapter boundary candidates (headings, dinkus patterns, topic shift) [advisory only — see note]
+    • Page number marker inventory (existing epub:type="pagebreak" audit) [planned]
+    • Output: book_graph.json (persisted as <book>.colophon.json; stages 2–4 read it at startup)
     │
     ▼
 [Stage 2] HTML Structural Repair
@@ -148,12 +148,17 @@ Optionally, users can provide **hints via config** — e.g., `"character_names":
 
 Colophon uses **LiteLLM** as the AI abstraction layer, giving users a single config entry to swap between:
 
-- Local models via Ollama (`mistral`, `llama3`, `phi3`, etc.) — default, no API key required
-- OpenAI (`gpt-5.5`, `gpt-5.4-mini`)
-- Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`)
+- Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`) — **current default for Stage 1** (`anthropic/claude-haiku-4-5`)
+- Local models via Ollama (`gemma3:12b`, `mistral`, etc.) — no API key; custom endpoints (e.g. Tailnet Mac Studio) via `--ollama-url` + `--num-ctx`
+- OpenAI (`gpt-4o-mini`, etc.) — planned candidate for the tournament
 - Any other LiteLLM-supported provider
 
 The LLM is **enhancing** decisions made by deterministic stages, not replacing them. If no LLM is configured, Colophon falls back to spaCy + regex for NER and chapter detection. The LLM accelerates and improves confidence; it is never a hard dependency for core repair.
+
+**Stage 1 reliability notes (from early dogfooding):**
+- Calls go through `LLMAdapter` with exponential backoff on `RateLimitError` (free-tier Anthropic keys are 5 req/min, 10K tokens/min — a full novel still completes, just slowly).
+- Input is chunked to ≤ `MAX_CHUNK_CHARS` (~8K tokens) so the JSON response is never truncated, regardless of the model's context window. Cloud models use the full cap; local Ollama models are additionally bounded by `num_ctx`.
+- Observed throughput on *The Lost Years* (~157K tokens): Haiku ≈ 3 min/book (~$0.04); `gemma4:26b` on a Tailnet Mac Studio ≈ 34 min/book. Haiku is both faster and produced cleaner variant clusters, hence the default. The Mac Studio is better suited to single-pass whole-book context experiments in the tournament.
 
 ---
 
@@ -172,6 +177,26 @@ By default, `book_graph.json` is written as a sibling file to the source EPUB (`
 3. Explicit path via `--graph-path` CLI flag or `graph_output_path` config key
 
 **Cache invalidation:** The graph header stores the source EPUB's SHA-256. On subsequent runs, if the checksum matches, Stage 1 is skipped. If it doesn't match (EPUB was edited), the graph is regenerated and the old file is overwritten. A `--rebuild-graph` flag forces regeneration regardless.
+
+> **Known limitation (to fix before the tournament):** the cache key is the EPUB SHA-256 only. The graph header also records `model` and `schema_version`, but neither is currently checked on load. Comparing two models against the same EPUB would collide on one `.colophon.json`. Before the model tournament lands, the cache must key on `(sha256, model, schema_version)` — or each tournament candidate must write to its own graph path.
+
+---
+
+## Variant Clustering (Stage 1 internals)
+
+The graph's reason to exist is collapsing every surface form of an entity into one record (`Kirk` / `Jim Kirk` / `James T. Kirk` → one character). Because the book is analyzed in chunks, different chunks independently pick different *canonical* forms for the same entity, so a post-pass must re-unify them.
+
+**Algorithm (`_cluster_and_merge`):**
+1. Flatten every per-chunk entity entry for a category (characters, places, organizations, invented terms).
+2. Build an undirected graph and union two entries when **one entry's canonical form appears as a surface form (canonical or variant) of the other**. Linking is intentionally restricted to *canonical*-to-surface matches — never variant-to-variant — so generic shared variants like "Admiral" or "the captain" cannot bridge two distinct characters.
+3. Take connected components. Within each component:
+   - **canonical** = the surface form with the highest summed occurrences (ties broken toward the longer, then lexically larger form),
+   - **occurrences** = sum across the component,
+   - **variants** = union of all observed surface forms minus the canonical.
+
+This pass is what turned a real run of *The Lost Years* from five separate "Kirk" records (252 + 227 + 133 + 61 + 4) into one. It is deterministic and LLM-free, so it is unit-tested directly (`tests/test_analysis.py`).
+
+> **Known limitation:** `chapters` in the graph are **advisory**. The LLM only sees chunk text, not real spine filenames, so `chapter.spine_item` is unreliable and chapters are deduplicated by title only. **Stage 4 (chapter detection) / Stage 5 (TOC rebuild) must derive the real chapter→file mapping deterministically** from spine order and in-document headings, treating Stage 1's chapter titles as hints, not ground truth. Likewise `_extract_spine_texts` currently keys hrefs by filename (`path.name`); the full OPF-relative href is needed for correct mapping and should be captured when Stage 5 redoes extraction.
 
 ---
 
@@ -204,7 +229,7 @@ colophon/
 ├── pipeline.py             # Stage orchestration
 ├── stages/
 │   ├── unpack.py           # Stage 0
-│   ├── analysis.py         # Stage 1 — builds the semantic book graph (the AI spine; not yet implemented)
+│   ├── analysis.py         # Stage 1 — builds the semantic book graph (the AI spine; IMPLEMENTED)
 │   ├── html_repair.py      # Stage 2
 │   ├── text_cleanup.py     # Stage 3
 │   ├── chapter_detect.py   # Stage 4
@@ -236,9 +261,9 @@ colophon/
 
 | Milestone | Scope |
 |---|---|
-| **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator), basic HTML repair, TOC rebuild, repack, CLI skeleton, repair report |
+| **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, basic HTML repair, TOC rebuild |
 | **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
-| **v0.3 — Semantic Graph + Proper Nouns** | NER, variant clustering, proper noun consistency, Calibre plugin alpha |
+| **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1), proper noun consistency application (Stage 3), Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
 | **v0.5 — CSS + EPUB 2→3 Upgrade** | CSS sanitization, optional EPUB version upgrade path |
 | **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable |

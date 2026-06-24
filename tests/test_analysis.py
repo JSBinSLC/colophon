@@ -108,15 +108,18 @@ def test_chunk_spine_truncates_oversized_item():
 # _merge_into
 # ---------------------------------------------------------------------------
 
+def _chars(*entities):
+    return {"characters": list(entities), "places": [], "organizations": [],
+            "invented_terms": [], "chapters": []}
+
+
 def test_merge_sums_occurrences():
     graph = empty_graph("abc", "test/model")
     partials = [
-        {"characters": [{"canonical": "Kirk", "variants": [], "occurrences": 5}],
-         "places": [], "organizations": [], "invented_terms": [], "chapters": []},
-        {"characters": [{"canonical": "Kirk", "variants": ["James Kirk"], "occurrences": 3}],
-         "places": [], "organizations": [], "invented_terms": [], "chapters": []},
+        _chars({"canonical": "Kirk", "variants": [], "occurrences": 5}),
+        _chars({"canonical": "Kirk", "variants": ["James Kirk"], "occurrences": 3}),
     ]
-    _merge_into(graph, partials, [])
+    _merge_into(graph, partials)
     chars = graph["entities"]["characters"]
     assert len(chars) == 1
     assert chars[0]["canonical"] == "Kirk"
@@ -124,28 +127,73 @@ def test_merge_sums_occurrences():
     assert "James Kirk" in chars[0]["variants"]
 
 
-def test_merge_deduplicates_chapters():
+def test_merge_clusters_distinct_canonicals_of_same_entity():
+    """The regression that motivated the rewrite: five surface forms of Kirk
+    chosen as canonical by different chunks must collapse to ONE character."""
     graph = empty_graph("abc", "test/model")
     partials = [
-        {"characters": [], "places": [], "organizations": [], "invented_terms": [],
-         "chapters": [{"index": 0, "title": "Chapter 1", "spine_item": "a.html", "first_line": "It was"}]},
-        {"characters": [], "places": [], "organizations": [], "invented_terms": [],
-         "chapters": [{"index": 0, "title": "Chapter 1", "spine_item": "a.html", "first_line": "It was"}]},
+        _chars({"canonical": "Kirk", "variants": ["Jim", "James T. Kirk"], "occurrences": 252}),
+        _chars({"canonical": "Jim Kirk", "variants": ["Kirk", "Captain Kirk"], "occurrences": 227}),
+        _chars({"canonical": "James T. Kirk", "variants": ["Kirk", "Jim"], "occurrences": 133}),
+        _chars({"canonical": "James Kirk", "variants": ["Kirk"], "occurrences": 61}),
     ]
-    _merge_into(graph, partials, [])
+    _merge_into(graph, partials)
+    chars = graph["entities"]["characters"]
+    assert len(chars) == 1, f"Expected 1 Kirk, got {[c['canonical'] for c in chars]}"
+    assert chars[0]["canonical"] == "Kirk"          # most frequent surface form
+    assert chars[0]["occurrences"] == 252 + 227 + 133 + 61
+    assert "James T. Kirk" in chars[0]["variants"]
+    assert "Jim Kirk" in chars[0]["variants"]
+
+
+def test_merge_does_not_overcluster_distinct_entities():
+    """A shared canonical-as-variant link is required; a merely similar name
+    that is no one's canonical surface form must stay separate."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Kirk", "variants": ["Jim", "Captain Kirk"], "occurrences": 200},
+            {"canonical": "George Kirk", "variants": ["George", "Jim's father"], "occurrences": 3},
+        ),
+    ]
+    _merge_into(graph, partials)
+    names = {c["canonical"] for c in graph["entities"]["characters"]}
+    assert names == {"Kirk", "George Kirk"}
+
+
+def test_merge_deduplicates_chapters():
+    graph = empty_graph("abc", "test/model")
+    chapter = {"index": 0, "title": "Chapter 1", "spine_item": "a.html", "first_line": "It was"}
+    partials = [
+        {"characters": [], "places": [], "organizations": [], "invented_terms": [],
+         "chapters": [dict(chapter)]},
+        {"characters": [], "places": [], "organizations": [], "invented_terms": [],
+         "chapters": [dict(chapter)]},
+    ]
+    _merge_into(graph, partials)
     assert len(graph["chapters"]) == 1
 
 
 def test_merge_sorts_by_occurrence():
     graph = empty_graph("abc", "test/model")
     partials = [
-        {"characters": [
+        _chars(
             {"canonical": "Spock", "variants": [], "occurrences": 2},
             {"canonical": "Kirk", "variants": [], "occurrences": 10},
-        ], "places": [], "organizations": [], "invented_terms": [], "chapters": []},
+        ),
     ]
-    _merge_into(graph, partials, [])
+    _merge_into(graph, partials)
     assert graph["entities"]["characters"][0]["canonical"] == "Kirk"
+
+
+def test_merge_tolerates_bad_occurrence_values():
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars({"canonical": "Kirk", "variants": [], "occurrences": "lots"}),
+        _chars({"canonical": "Kirk", "variants": [], "occurrences": None}),
+    ]
+    _merge_into(graph, partials)
+    assert graph["entities"]["characters"][0]["occurrences"] == 0
 
 
 # ---------------------------------------------------------------------------

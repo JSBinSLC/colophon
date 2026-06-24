@@ -19,10 +19,9 @@ import json
 import logging
 import re
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
-
-log = logging.getLogger(__name__)
 
 from bs4 import BeautifulSoup
 from lxml import etree
@@ -30,6 +29,8 @@ from lxml import etree
 from colophon.config import PipelineConfig
 from colophon.models.llm_adapter import LLMAdapter
 from colophon.stages import Stage
+
+log = logging.getLogger(__name__)
 
 GRAPH_SCHEMA_VERSION = "1"
 
@@ -217,11 +218,11 @@ Rules:
 
 
 def _call_with_backoff(
-    adapter: "LLMAdapter",
+    adapter: LLMAdapter,
     label: str,
     user_msg: str,
     max_retries: int = 5,
-) -> "dict | None":
+) -> dict | None:
     """Call adapter.complete_json with exponential backoff on rate-limit errors."""
     import litellm
 
@@ -231,7 +232,8 @@ def _call_with_backoff(
             return adapter.complete_json(_SYSTEM_PROMPT, user_msg)
         except litellm.RateLimitError:
             if attempt == max_retries - 1:
-                log.warning("Stage 1: %s hit rate limit, giving up after %d retries", label, max_retries)
+                log.warning("Stage 1: %s hit rate limit, giving up after %d retries",
+                            label, max_retries)
                 return None
             log.warning("Stage 1: %s rate-limited, retrying in %.0fs (attempt %d/%d)",
                         label, delay, attempt + 1, max_retries)
@@ -253,9 +255,14 @@ def _build_graph(
     source_sha256: str,
 ) -> dict[str, Any]:
     """Run LLM analysis over all spine items (chunked if needed) and merge."""
-    max_tokens = config.llm.num_ctx or 8192
-    context_chars = (max_tokens - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
-    usable_chars = min(context_chars, MAX_CHUNK_CHARS)
+    # Cloud models have ample context; only local Ollama models (num_ctx set)
+    # need their window respected. Either way, cap at MAX_CHUNK_CHARS so the
+    # JSON response is never truncated by an over-large input.
+    if config.llm.num_ctx:
+        context_chars = (config.llm.num_ctx - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
+        usable_chars = max(1, min(context_chars, MAX_CHUNK_CHARS))
+    else:
+        usable_chars = MAX_CHUNK_CHARS
 
     chunks = _chunk_spine(spine_texts, usable_chars)
     partial_graphs: list[dict[str, Any]] = []
@@ -269,7 +276,7 @@ def _build_graph(
 
     graph = empty_graph(source_sha256, config.llm.model)
     if partial_graphs:
-        _merge_into(graph, partial_graphs, spine_texts)
+        _merge_into(graph, partial_graphs)
 
     return graph
 
@@ -306,50 +313,119 @@ def _chunk_spine(
     return chunks
 
 
-def _merge_into(
-    graph: dict[str, Any],
-    partials: list[dict[str, Any]],
-    spine_texts: list[dict[str, str]],
-) -> None:
-    """Merge partial graph responses into the master graph."""
-    for category in ("characters", "places", "organizations", "invented_terms"):
-        seen: dict[str, dict[str, Any]] = {}
-        for partial in partials:
-            for entity in partial.get(category, []):
-                canonical = entity.get("canonical", "").strip()
-                if not canonical:
-                    continue
-                key = canonical.lower()
-                if key in seen:
-                    # Merge variants and sum occurrences.
-                    existing = seen[key]
-                    new_variants = set(existing.get("variants", []))
-                    new_variants.update(entity.get("variants", []))
-                    new_variants.discard(canonical)
-                    existing["variants"] = sorted(new_variants)
-                    existing["occurrences"] = (
-                        existing.get("occurrences", 0) + entity.get("occurrences", 0)
-                    )
-                else:
-                    seen[key] = {
-                        "canonical": canonical,
-                        "variants": sorted(set(entity.get("variants", []))),
-                        "occurrences": entity.get("occurrences", 0),
-                    }
-        graph["entities"][category] = sorted(
-            seen.values(), key=lambda e: -e["occurrences"]
-        )
+def _merge_into(graph: dict[str, Any], partials: list[dict[str, Any]]) -> None:
+    """Merge partial graph responses into the master graph.
 
-    # Chapters: deduplicate by title, preserve order.
+    Entities are clustered across chunks so that different surface forms of
+    the same entity (e.g. "Kirk", "Jim Kirk", "James T. Kirk") collapse into a
+    single record — the variant-resolution that is the graph's whole point.
+    """
+    for category in ("characters", "places", "organizations", "invented_terms"):
+        entries = _collect_entries(partials, category)
+        graph["entities"][category] = _cluster_and_merge(entries)
+
+    # Chapters: deduplicate by title, preserve order, re-index.
     seen_titles: set[str] = set()
     chapters: list[dict[str, Any]] = []
     for partial in partials:
         for ch in partial.get("chapters", []):
-            title = ch.get("title", "").strip()
+            title = (ch.get("title") or "").strip()
             if title and title not in seen_titles:
                 seen_titles.add(title)
                 chapters.append(ch)
-    # Re-index.
     for i, ch in enumerate(chapters):
         ch["index"] = i
     graph["chapters"] = chapters
+
+
+def _coerce_count(value: Any) -> int:
+    """Best-effort conversion of an LLM-supplied occurrence count to int."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _collect_entries(partials: list[dict[str, Any]], category: str) -> list[dict[str, Any]]:
+    """Flatten one entity category across all partial responses."""
+    entries: list[dict[str, Any]] = []
+    for partial in partials:
+        for entity in partial.get(category, []):
+            canonical = (entity.get("canonical") or "").strip()
+            if not canonical:
+                continue
+            variants = {
+                v.strip() for v in entity.get("variants", []) if v and v.strip()
+            }
+            variants.discard(canonical)
+            entries.append({
+                "canonical": canonical,
+                "variants": variants,
+                "occurrences": _coerce_count(entity.get("occurrences")),
+            })
+    return entries
+
+
+def _cluster_and_merge(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group entries that refer to the same entity and merge each group.
+
+    Two entries are linked when one's canonical form appears as a surface form
+    (canonical or variant) of the other. Linking only on *canonical* matches —
+    never variant-to-variant — avoids generic titles like "Admiral" wrongly
+    bridging two distinct characters.
+    """
+    n = len(entries)
+    if n == 0:
+        return []
+
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    canons = [e["canonical"].lower() for e in entries]
+    surfaces = [
+        {e["canonical"].lower()} | {v.lower() for v in e["variants"]}
+        for e in entries
+    ]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if canons[i] in surfaces[j] or canons[j] in surfaces[i]:
+                union(i, j)
+
+    groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(entries[i])
+
+    merged: list[dict[str, Any]] = []
+    for group in groups.values():
+        # Canonical = the surface form with the most occurrences; ties broken
+        # toward the longer (more complete) and then lexically larger form.
+        totals: dict[str, int] = defaultdict(int)
+        for e in group:
+            totals[e["canonical"]] += e["occurrences"]
+        canonical = max(totals, key=lambda k: (totals[k], len(k), k))
+
+        all_surface: set[str] = set()
+        occurrences = 0
+        for e in group:
+            all_surface.add(e["canonical"])
+            all_surface.update(e["variants"])
+            occurrences += e["occurrences"]
+        all_surface.discard(canonical)
+
+        merged.append({
+            "canonical": canonical,
+            "variants": sorted(all_surface),
+            "occurrences": occurrences,
+        })
+
+    return sorted(merged, key=lambda e: -e["occurrences"])
