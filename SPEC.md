@@ -203,13 +203,14 @@ colophon/
 ├── cli.py                  # Click-based CLI entry point
 ├── pipeline.py             # Stage orchestration
 ├── stages/
-│   ├── unpack.py
-│   ├── html_repair.py
-│   ├── text_cleanup.py
-│   ├── chapter_detect.py
-│   ├── toc_rebuild.py
-│   ├── css_sanitize.py
-│   └── repack.py
+│   ├── unpack.py           # Stage 0
+│   ├── analysis.py         # Stage 1 — builds the semantic book graph (the AI spine; not yet implemented)
+│   ├── html_repair.py      # Stage 2
+│   ├── text_cleanup.py     # Stage 3
+│   ├── chapter_detect.py   # Stage 4
+│   ├── toc_rebuild.py      # Stage 5
+│   ├── css_sanitize.py     # Stage 6
+│   └── repack.py           # Stage 7
 ├── models/                 # Optional AI model adapters
 │   ├── spacy_detector.py
 │   └── llm_adapter.py
@@ -226,7 +227,7 @@ colophon/
 
 - **As an editor**, I run `colophon fix book.epub` and get back a clean, validated EPUB without opening Sigil
 - **As a developer**, I add a custom stage by dropping a module into `stages/` and registering it in config — no core changes needed
-- **As a reader with a collection**, I run `colophon fix *.epub --batch` against a folder and get a report of what was fixed vs. what needs manual review
+- **As a reader with a collection**, I run `colophon fix ./my-library --batch` against a folder and get a report of what was fixed vs. what needs manual review
 - **As a contributor**, I pick up a clearly scoped stage, write tests against the fixture EPUBs, and submit a PR that touches nothing outside its module
 
 ---
@@ -235,7 +236,7 @@ colophon/
 
 | Milestone | Scope |
 |---|---|
-| **v0.1 — Core Pipeline** | Unpack/validate, basic HTML repair, TOC rebuild, repack, epubcheck integration, CLI skeleton, repair report |
+| **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator), basic HTML repair, TOC rebuild, repack, CLI skeleton, repair report |
 | **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
 | **v0.3 — Semantic Graph + Proper Nouns** | NER, variant clustering, proper noun consistency, Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |

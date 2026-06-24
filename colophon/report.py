@@ -33,8 +33,10 @@ class RepairChange:
 class RepairReport:
     source_epub: str
     changes: list[RepairChange] = field(default_factory=list)
-    epubcheck_violations_before: int = 0
-    epubcheck_violations_after: int = 0
+    validation_errors_before: int = 0
+    validation_errors_after: int = 0
+    validation_warnings_before: int = 0
+    validation_warnings_after: int = 0
 
     def add(self, change: RepairChange) -> None:
         self.changes.append(change)
@@ -50,8 +52,12 @@ class RepairReport:
         data = {
             "source_epub": self.source_epub,
             "summary": self.summary(),
-            "epubcheck_violations_before": self.epubcheck_violations_before,
-            "epubcheck_violations_after": self.epubcheck_violations_after,
+            "validation": {
+                "errors_before": self.validation_errors_before,
+                "errors_after": self.validation_errors_after,
+                "warnings_before": self.validation_warnings_before,
+                "warnings_after": self.validation_warnings_after,
+            },
             "changes": [
                 {
                     "stage": c.stage,

@@ -21,32 +21,63 @@ def main() -> None:
     """Colophon — AI-assisted EPUB repair pipeline."""
 
 
+def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
+    """Expand inputs into a list of EPUB files.
+
+    With --batch, any directory is searched recursively for *.epub files.
+    This also covers the Windows case where the shell does not expand globs.
+    """
+    epubs: list[Path] = []
+    for item in inputs:
+        if item.is_dir():
+            if not batch:
+                raise click.UsageError(
+                    f"'{item}' is a directory. Pass --batch to process all EPUBs inside it."
+                )
+            epubs.extend(sorted(item.rglob("*.epub")))
+        else:
+            epubs.append(item)
+    return epubs
+
+
 @main.command()
-@click.argument("epub_files", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--batch", is_flag=True, help="Treat directory arguments as folders of EPUBs to repair.")
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying them.")
 @click.option("--interactive", is_flag=True, help="Pause at low-confidence decisions.")
 @click.option("--rebuild-graph", is_flag=True, help="Force semantic graph rebuild.")
 @click.option("--llm", "llm_model", default=None, help="LLM model (e.g. ollama/mistral).")
-@click.option("--report", "report_path", default=None, type=click.Path(path_type=Path),
-              help="Write repair report to this path (default: <epub>.repair-report.json).")
+@click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
+              help="Write each repair report into this directory (default: alongside each EPUB).")
 def fix(
-    epub_files: tuple[Path, ...],
+    inputs: tuple[Path, ...],
+    batch: bool,
     dry_run: bool,
     interactive: bool,
     rebuild_graph: bool,
     llm_model: str | None,
-    report_path: Path | None,
+    report_dir: Path | None,
 ) -> None:
     """Repair one or more EPUB files."""
     config = PipelineConfig(dry_run=dry_run, interactive=interactive, rebuild_graph=rebuild_graph)
     if llm_model:
         config.llm.model = llm_model
 
+    epub_files = _collect_epubs(inputs, batch)
+    if not epub_files:
+        raise click.UsageError("No EPUB files found to process.")
+
+    if report_dir and not dry_run:
+        report_dir.mkdir(parents=True, exist_ok=True)
+
     for epub_path in epub_files:
         console.rule(f"[bold]{epub_path.name}[/bold]")
         report = pipeline.run(epub_path, config)
 
-        out_path = report_path or epub_path.with_suffix(".repair-report.json")
+        if report_dir:
+            out_path = report_dir / f"{epub_path.stem}.repair-report.json"
+        else:
+            out_path = epub_path.with_suffix(".repair-report.json")
         if not dry_run:
             report.write(out_path)
 
@@ -55,6 +86,18 @@ def fix(
         table.add_row("[green]Applied[/green]", str(summary["applied"]))
         table.add_row("[yellow]Flagged for review[/yellow]", str(summary["flagged"]))
         table.add_row("[dim]Skipped[/dim]", str(summary["skipped"]))
+        if dry_run:
+            table.add_row(
+                "Validation",
+                f"{report.validation_errors_before} errors, "
+                f"{report.validation_warnings_before} warnings (before repair)",
+            )
+        else:
+            table.add_row(
+                "Validation",
+                f"{report.validation_errors_before} -> {report.validation_errors_after} errors, "
+                f"{report.validation_warnings_before} -> {report.validation_warnings_after} warnings",
+            )
         console.print(table)
 
         if not dry_run:

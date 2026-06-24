@@ -62,3 +62,62 @@ def test_mimetype_compressed(tmp_path):
         zf.writestr("mimetype", "application/epub+zip")
     result = validate(epub)
     assert any(i.code == "PKG004" for i in result.errors)
+
+
+# ---- EPUB 3 NAV path (built in-memory; no binary fixture committed) ----
+
+CONTAINER_XML = """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+
+OPF_EPUB3 = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Test</dc:title>
+    <dc:identifier id="uid">urn:uuid:test</dc:identifier>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>"""
+
+NAV_WITH_TOC = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+  <body>
+    <nav epub:type="toc"><ol><li><a href="ch1.xhtml">One</a></li></ol></nav>
+  </body>
+</html>"""
+
+NAV_WITHOUT_TOC = NAV_WITH_TOC.replace('epub:type="toc"', 'epub:type="landmarks"')
+
+
+def _build_epub3(tmp_path, nav_content: str) -> Path:
+    epub = tmp_path / "epub3.epub"
+    with zipfile.ZipFile(epub, "w") as zf:
+        zf.writestr(zipfile.ZipInfo("mimetype"), "application/epub+zip")
+        zf.writestr("META-INF/container.xml", CONTAINER_XML)
+        zf.writestr("OEBPS/content.opf", OPF_EPUB3)
+        zf.writestr("OEBPS/nav.xhtml", nav_content)
+        zf.writestr("OEBPS/ch1.xhtml", "<html xmlns='http://www.w3.org/1999/xhtml'><body><p>hi</p></body></html>")
+    return epub
+
+
+def test_epub3_valid_nav_passes(tmp_path):
+    epub = _build_epub3(tmp_path, NAV_WITH_TOC)
+    result = validate(epub)
+    # A well-formed EPUB 3 with a toc nav should produce no errors —
+    # this guards against the namespaced-predicate false positive.
+    assert result.ok(), f"Unexpected errors: {result.errors}"
+    assert not any(i.code == "NAV004" for i in result.issues)
+
+
+def test_epub3_missing_toc_nav_detected(tmp_path):
+    epub = _build_epub3(tmp_path, NAV_WITHOUT_TOC)
+    result = validate(epub)
+    assert any(i.code == "NAV004" for i in result.errors)

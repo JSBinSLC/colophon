@@ -16,7 +16,8 @@ class UnpackStage(Stage):
 
         result = validate(epub_path)
         ctx["validation_before"] = result
-        ctx["report"].epubcheck_violations_before = len(result.errors)
+        ctx["report"].validation_errors_before = len(result.errors)
+        ctx["report"].validation_warnings_before = len(result.warnings)
 
         tmp = Path(tempfile.mkdtemp(prefix="colophon_"))
         ctx["work_dir"] = tmp
@@ -30,7 +31,8 @@ class UnpackStage(Stage):
         epub_path: Path = ctx["epub_path"]
         result = validate(epub_path)
         ctx["validation_before"] = result
-        ctx["report"].epubcheck_violations_before = len(result.errors)
+        ctx["report"].validation_errors_before = len(result.errors)
+        ctx["report"].validation_warnings_before = len(result.warnings)
 
 
 def _detect_version(work_dir: Path) -> str:

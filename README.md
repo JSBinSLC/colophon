@@ -43,8 +43,11 @@ colophon fix book.epub --dry-run
 # Repair with a specific LLM backend
 colophon fix book.epub --llm anthropic/claude-haiku-4-5
 
-# Repair a folder of EPUBs
-colophon fix *.epub --batch
+# Repair every EPUB in a folder (recursively)
+colophon fix ./my-library --batch
+
+# Write all reports into one directory instead of alongside each EPUB
+colophon fix ./my-library --batch --report-dir ./reports
 ```
 
 ## Configuration

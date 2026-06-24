@@ -85,7 +85,7 @@ def validate(epub_path: Path) -> ValidationResult:
         name_set = set(names)
 
         _check_container(zf, names, name_set, result)
-        opf_path = _find_opf_path(zf, result)
+        opf_path = _find_opf_path(zf, name_set, result)
         if opf_path:
             _check_opf(zf, opf_path, name_set, result)
 
@@ -125,8 +125,8 @@ def _check_container(
             result.error("PKG007", f"'META-INF/container.xml' is not well-formed XML: {e}")
 
 
-def _find_opf_path(zf: zipfile.ZipFile, result: ValidationResult) -> str | None:
-    if "META-INF/container.xml" not in set(zf.namelist()):
+def _find_opf_path(zf: zipfile.ZipFile, name_set: set[str], result: ValidationResult) -> str | None:
+    if "META-INF/container.xml" not in name_set:
         return None
     try:
         root = etree.fromstring(zf.read("META-INF/container.xml"))
@@ -143,7 +143,7 @@ def _find_opf_path(zf: zipfile.ZipFile, result: ValidationResult) -> str | None:
         result.error("PKG009", "<rootfile> missing 'full-path' attribute")
         return None
 
-    if opf_path not in set(zf.namelist()):
+    if opf_path not in name_set:
         result.error("PKG010", f"OPF file '{opf_path}' listed in container.xml does not exist in ZIP")
         return None
 
@@ -234,8 +234,8 @@ def _check_opf(
                 result.warn("NCX001", "EPUB 2 <spine> missing 'toc' attribute pointing to NCX", opf_path)
             elif toc_id in manifest_ids:
                 ncx_path = opf_base + manifest_ids[toc_id]
-                _check_ncx(zf, ncx_path, result)
-                _check_toc_completeness(zf, ncx_path, len(itemrefs), result)
+                _check_ncx(zf, ncx_path, name_set, result)
+                _check_toc_completeness(zf, ncx_path, name_set, len(itemrefs), result)
 
         # NAV check for EPUB 3
         if version.startswith("3.") and manifest is not None:
@@ -250,8 +250,13 @@ def _check_opf(
                 _check_nav(zf, nav_href, name_set, result)
 
 
-def _check_ncx(zf: zipfile.ZipFile, ncx_path: str, result: ValidationResult) -> None:
-    if ncx_path not in set(zf.namelist()):
+def _check_ncx(
+    zf: zipfile.ZipFile,
+    ncx_path: str,
+    name_set: set[str],
+    result: ValidationResult,
+) -> None:
+    if ncx_path not in name_set:
         result.error("NCX002", f"NCX file '{ncx_path}' not found in ZIP")
         return
     try:
@@ -271,7 +276,6 @@ def _check_ncx(zf: zipfile.ZipFile, ncx_path: str, result: ValidationResult) -> 
         return
     else:
         ncx_base = ncx_path.rsplit("/", 1)[0] + "/" if "/" in ncx_path else ""
-        name_set = set(zf.namelist())
         for point in nav_points:
             content = point.find("ncx:content", NS)
             if content is None:
@@ -285,10 +289,11 @@ def _check_ncx(zf: zipfile.ZipFile, ncx_path: str, result: ValidationResult) -> 
 def _check_toc_completeness(
     zf: zipfile.ZipFile,
     ncx_path: str,
+    name_set: set[str],
     spine_count: int,
     result: ValidationResult,
 ) -> None:
-    if ncx_path not in set(zf.namelist()):
+    if ncx_path not in name_set:
         return
     try:
         root = etree.fromstring(zf.read(ncx_path))
@@ -321,9 +326,12 @@ def _check_nav(
         result.error("NAV003", f"NAV file is not well-formed XML: {e}", nav_path)
         return
 
-    toc_navs = root.findall(
-        ".//xhtml:nav[@epub:type='toc']",
-        {**NS, "epub": "http://www.idpf.org/2007/ops"},
-    )
+    # lxml's ElementPath does not reliably support namespaced attributes inside
+    # predicates, so scan <nav> elements and check the epub:type attribute directly.
+    epub_type = f"{{{NS['epub']}}}type"
+    toc_navs = [
+        nav for nav in root.iter(f"{{{NS['xhtml']}}}nav")
+        if nav.get(epub_type) == "toc"
+    ]
     if not toc_navs:
         result.error("NAV004", "NAV file has no <nav epub:type='toc'> element", nav_path)

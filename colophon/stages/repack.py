@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from colophon.stages import Stage
+from colophon.validator import validate
 
 
 class RepackStage(Stage):
@@ -17,6 +18,11 @@ class RepackStage(Stage):
         output_path = epub_path.with_stem(epub_path.stem + ".repaired")
         _pack_epub(work_dir, output_path)
         ctx["output_epub"] = output_path
+
+        result = validate(output_path)
+        ctx["validation_after"] = result
+        ctx["report"].validation_errors_after = len(result.errors)
+        ctx["report"].validation_warnings_after = len(result.warnings)
 
         shutil.rmtree(work_dir, ignore_errors=True)
 
