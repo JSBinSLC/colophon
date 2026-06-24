@@ -1,10 +1,18 @@
+from __future__ import annotations
+
+import os
 from pathlib import Path
 from pydantic import BaseModel, Field
 
 
 class LLMConfig(BaseModel):
-    model: str = "ollama/mistral"
-    timeout: int = 60
+    model: str = "anthropic/claude-haiku-4-5"
+    api_key: str | None = None  # None = read from ANTHROPIC_API_KEY env var
+    timeout: int = 120
+
+    def resolved_api_key(self) -> str | None:
+        """Return the API key, preferring the explicit value over the env var."""
+        return self.api_key or os.environ.get("ANTHROPIC_API_KEY")
 
 
 class HintsConfig(BaseModel):

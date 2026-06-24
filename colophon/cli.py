@@ -3,12 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
 from colophon import __version__
 from colophon.config import PipelineConfig
 from colophon import pipeline
+
+# Load .env from cwd (or any parent) before anything else touches env vars.
+load_dotenv()
 
 console = Console()
 
@@ -46,7 +50,9 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying them.")
 @click.option("--interactive", is_flag=True, help="Pause at low-confidence decisions.")
 @click.option("--rebuild-graph", is_flag=True, help="Force semantic graph rebuild.")
-@click.option("--llm", "llm_model", default=None, help="LLM model (e.g. ollama/mistral).")
+@click.option("--llm", "llm_model", default=None, help="LLM model (e.g. anthropic/claude-haiku-4-5).")
+@click.option("--api-key", "api_key", default=None, envvar="ANTHROPIC_API_KEY",
+              help="Anthropic API key. Prefer setting ANTHROPIC_API_KEY in .env instead.")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
               help="Write each repair report into this directory (default: alongside each EPUB).")
 def fix(
@@ -56,12 +62,15 @@ def fix(
     interactive: bool,
     rebuild_graph: bool,
     llm_model: str | None,
+    api_key: str | None,
     report_dir: Path | None,
 ) -> None:
     """Repair one or more EPUB files."""
     config = PipelineConfig(dry_run=dry_run, interactive=interactive, rebuild_graph=rebuild_graph)
     if llm_model:
         config.llm.model = llm_model
+    if api_key:
+        config.llm.api_key = api_key
 
     epub_files = _collect_epubs(inputs, batch)
     if not epub_files:

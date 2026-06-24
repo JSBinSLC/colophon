@@ -33,6 +33,11 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Project
 *.colophon.json
 *.repair-report.json

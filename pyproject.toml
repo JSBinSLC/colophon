@@ -33,6 +33,7 @@ dependencies = [
     "spacy>=3.7",
     "litellm>=1.40",
     "langdetect>=1.0.9",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
