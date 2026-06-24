@@ -19,6 +19,11 @@ class UnpackStage(Stage):
         ctx["report"].validation_errors_before = len(result.errors)
         ctx["report"].validation_warnings_before = len(result.warnings)
 
+        # DRM is a hard stop: there is nothing to unpack or repair. Abort the
+        # pipeline before extraction so no pointless output file is produced.
+        if _gate_on_drm(ctx, result):
+            return
+
         tmp = Path(tempfile.mkdtemp(prefix="colophon_"))
         ctx["work_dir"] = tmp
 
@@ -33,6 +38,18 @@ class UnpackStage(Stage):
         ctx["validation_before"] = result
         ctx["report"].validation_errors_before = len(result.errors)
         ctx["report"].validation_warnings_before = len(result.warnings)
+        _gate_on_drm(ctx, result)
+
+
+def _gate_on_drm(ctx: dict, result) -> bool:
+    """If the validation result flags DRM, mark the run skipped. Returns True
+    when DRM was detected (caller should abort)."""
+    if any(i.code == "DRM001" for i in result.errors):
+        reason = "DRM-protected (encrypted content) - cannot repair"
+        ctx["abort_reason"] = reason
+        ctx["report"].skipped_reason = reason
+        return True
+    return False
 
 
 def _detect_version(work_dir: Path) -> str:

@@ -84,12 +84,64 @@ def validate(epub_path: Path) -> ValidationResult:
         names = zf.namelist()
         name_set = set(names)
 
+        # DRM is a hard gate: encrypted content cannot be parsed or repaired.
+        # Detect it first and return a single authoritative error, so we don't
+        # emit misleading downstream errors (e.g. "malformed nav") caused by
+        # trying to parse encrypted bytes.
+        if _detect_drm(zf, name_set):
+            result.error(
+                "DRM001",
+                "EPUB is DRM-protected (encrypted content) - cannot repair",
+            )
+            return result
+
         _check_container(zf, names, name_set, result)
         opf_path = _find_opf_path(zf, name_set, result)
         if opf_path:
             _check_opf(zf, opf_path, name_set, result)
 
     return result
+
+
+# Content document extensions whose encryption indicates true DRM (as opposed
+# to font obfuscation, which only touches .ttf/.otf/.woff and is repairable).
+_DRM_CONTENT_EXTS = (".xhtml", ".html", ".htm", ".opf", ".ncx", ".css")
+
+
+def _detect_drm(zf: zipfile.ZipFile, name_set: set[str]) -> bool:
+    """Return True if the EPUB uses content DRM (not mere font obfuscation).
+
+    Distinguishes Adobe ADEPT / content encryption (a hard "cannot repair"
+    gate) from the IDPF/Adobe font-obfuscation that legitimately uses
+    encryption.xml and is fully repairable.
+    """
+    if "META-INF/encryption.xml" not in name_set:
+        return False
+
+    # An Adobe ADEPT license file is a definitive DRM marker.
+    if "META-INF/rights.xml" in name_set:
+        return True
+
+    try:
+        root = etree.fromstring(zf.read("META-INF/encryption.xml"))
+    except etree.XMLSyntaxError:
+        # An encryption.xml we can't even parse is, conservatively, DRM.
+        return True
+
+    # ADEPT key references anywhere → DRM.
+    for el in root.iter():
+        if "ns.adobe.com/adept" in (el.text or ""):
+            return True
+
+    # Otherwise, DRM only if a *content* document is encrypted. Font-only
+    # obfuscation (encrypting just .ttf/.otf/.woff) is not DRM.
+    enc_ns = "http://www.w3.org/2001/04/xmlenc#"
+    for ref in root.iter(f"{{{enc_ns}}}CipherReference"):
+        uri = (ref.get("URI") or "").lower().split("#")[0]
+        if uri.endswith(_DRM_CONTENT_EXTS):
+            return True
+
+    return False
 
 
 def _check_container(

@@ -454,17 +454,12 @@ PLOT_AGAINST = "plot-against-president.epub"
 
 
 @_skipif(PLOT_AGAINST)
-def test_plot_against_has_nav003():
-    assert "NAV003" in _issue_codes(_fixture(PLOT_AGAINST))
-
-
-@_skipif(PLOT_AGAINST)
-def test_plot_against_roundtrip():
-    out = _roundtrip(_fixture(PLOT_AGAINST))
-    try:
-        assert zipfile.is_zipfile(out)
-    finally:
-        out.unlink(missing_ok=True)
+def test_plot_against_is_drm_gated():
+    """This fixture is an Adobe ADEPT (library-loan) DRM file. It exists to
+    test the DRM gate: the validator must report DRM001 and nothing else —
+    the encrypted bytes must NOT surface as a spurious NAV003 etc."""
+    codes = _issue_codes(_fixture(PLOT_AGAINST))
+    assert codes == {"DRM001"}, f"Expected only DRM001, got {codes}"
 
 
 # ---------------------------------------------------------------------------

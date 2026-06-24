@@ -54,7 +54,7 @@ Source: Calibre 0.8.8 export, circa 2011
 | `so-long-thanks.epub` | NCX001, OPF009 | spine missing `toc` attr; comedy sci-fi; spine=51 |
 | `hidden-truth.epub` | NAV003 | EPUB 3 nav not well-formed XML (unescaped entities) |
 | `sudden-rescue.epub` | NAV003 | EPUB 3 nav not well-formed XML; self-published |
-| `plot-against-president.epub` | NAV003 | EPUB 3 nav completely malformed; most severe variant |
+| `plot-against-president.epub` | DRM001 | **Adobe ADEPT (library-loan) DRM.** Gating fixture — must be detected as unrepairable and skipped, NOT "repaired". Its encrypted bytes previously misread as NAV003. |
 | `les-miserables-fr.epub` | NCX008, OPF009 | **422 spine items** — large-book stress test; French |
 | `le-vicomte-bragelonne.epub` | NCX008 | **271 spine items** — large-spine stress test |
 | `elon-musk.epub` | OPF009 | EPUB 3; spine=198; large modern non-fiction |
@@ -85,5 +85,6 @@ in-book cast list.
 | OPF004 | Required metadata field missing | teachings-of-the-prophet-joseph |
 | OPF008 | Manifest item `href` missing from ZIP | emphyrio |
 | OPF009 | Wrong `media-type` for manifest item | allanons-quest, lincolns-dreams, age-of-wonder, etc. |
-| NAV003 | EPUB 3 nav document is not well-formed XML | hidden-truth, sudden-rescue, plot-against-president |
+| NAV003 | EPUB 3 nav document is not well-formed XML | hidden-truth, sudden-rescue |
 | NAV004 | EPUB 3 nav document has no `epub:type="toc"` nav element | paradeisia |
+| DRM001 | DRM-protected (encrypted content) — gated, unrepairable | plot-against-president |

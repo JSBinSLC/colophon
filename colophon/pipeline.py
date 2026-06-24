@@ -48,5 +48,8 @@ def run(epub_path: Path, config: PipelineConfig) -> RepairReport:
             else:
                 stage.analyze(ctx)
             progress.remove_task(task)
+            # A stage (e.g. unpack on a DRM file) can abort the whole run.
+            if ctx.get("abort_reason"):
+                break
 
     return report

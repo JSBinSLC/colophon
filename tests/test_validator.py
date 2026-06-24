@@ -121,3 +121,57 @@ def test_epub3_missing_toc_nav_detected(tmp_path):
     epub = _build_epub3(tmp_path, NAV_WITHOUT_TOC)
     result = validate(epub)
     assert any(i.code == "NAV004" for i in result.errors)
+
+
+# ---- DRM gating ----
+
+ADEPT_RIGHTS = """<?xml version="1.0"?>
+<adept:rights xmlns:adept="http://ns.adobe.com/adept"><licenseToken/></adept:rights>"""
+
+ENCRYPTION_ADEPT = """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">
+      <resource xmlns="http://ns.adobe.com/adept">urn:uuid:abc</resource>
+    </KeyInfo>
+    <CipherData><CipherReference URI="OEBPS/ch1.xhtml"/></CipherData>
+  </EncryptedData>
+</encryption>"""
+
+# IDPF font obfuscation — legitimately uses encryption.xml, is NOT DRM.
+ENCRYPTION_FONT_ONLY = """<?xml version="1.0"?>
+<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#">
+    <EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/>
+    <CipherData><CipherReference URI="OEBPS/fonts/body.otf"/></CipherData>
+  </EncryptedData>
+</encryption>"""
+
+
+def test_drm_adept_rights_file_detected(tmp_path):
+    """An Adobe ADEPT rights.xml is a definitive DRM marker."""
+    epub = _build_epub3(tmp_path, NAV_WITH_TOC)
+    with zipfile.ZipFile(epub, "a") as zf:
+        zf.writestr("META-INF/encryption.xml", ENCRYPTION_ADEPT)
+        zf.writestr("META-INF/rights.xml", ADEPT_RIGHTS)
+    result = validate(epub)
+    assert any(i.code == "DRM001" for i in result.errors)
+
+
+def test_drm_is_the_only_error_reported(tmp_path):
+    """DRM short-circuits: no misleading downstream errors on encrypted bytes."""
+    epub = _build_epub3(tmp_path, NAV_WITHOUT_TOC)  # would otherwise be NAV004
+    with zipfile.ZipFile(epub, "a") as zf:
+        zf.writestr("META-INF/encryption.xml", ENCRYPTION_ADEPT)
+    codes = {i.code for i in validate(epub).issues}
+    assert codes == {"DRM001"}, f"Expected only DRM001, got {codes}"
+
+
+def test_font_obfuscation_is_not_drm(tmp_path):
+    """Font obfuscation uses encryption.xml but must NOT be gated as DRM."""
+    epub = _build_epub3(tmp_path, NAV_WITH_TOC)
+    with zipfile.ZipFile(epub, "a") as zf:
+        zf.writestr("META-INF/encryption.xml", ENCRYPTION_FONT_ONLY)
+    result = validate(epub)
+    assert not any(i.code == "DRM001" for i in result.issues)
+    assert result.ok(), f"Font-obfuscated EPUB should still validate: {result.errors}"

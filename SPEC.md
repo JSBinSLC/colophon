@@ -65,6 +65,7 @@ Input EPUB
 [Stage 0] Unpack & Validate
     • Extract to temp directory
     • Run Colophon's built-in pure-Python EPUB validator (validator.py), capture violations
+    • DRM gate: if content is encrypted (Adobe ADEPT etc.), abort the run — skip, don't "repair" (see "DRM Handling")
     • Normalize container structure (mimetype, META-INF/container.xml)
     • Detect EPUB version (2 or 3), flag for optional upgrade
     │
@@ -237,6 +238,20 @@ The same applies to *The Brothers Karamazov* (Dmitri → Mitya / Mitka / Mitenka
 | EPUB 3 | Primary target |
 | EPUB 2 | Full support; optional upgrade path to EPUB 3 |
 | Other formats (MOBI, AZW3, FB2, etc.) | Out of scope — use Calibre or other converter tool to convert first, then repair with Colophon |
+
+---
+
+## DRM Handling
+
+Colophon **does not, and will not, break DRM.** DRM-protected EPUBs (e.g. Adobe ADEPT, the scheme used by library-loan/OverDrive files) have encrypted content documents that cannot be parsed, let alone repaired. The pipeline treats DRM as a **hard gate**, detected in Stage 0:
+
+- **Detection** (`validator._detect_drm`): `META-INF/encryption.xml` is present **and** either an Adobe `META-INF/rights.xml` exists, an ADEPT key reference appears, or a `CipherReference` targets a **content** document (`.xhtml/.html/.opf/.ncx/.css`). Reported as the error code `DRM001`.
+- **Gate behavior:** when DRM is detected, Stage 0 aborts the run before extraction. No output EPUB is written; the repair report records `skipped_reason`; the CLI prints `Skipped: DRM-protected …`. In `--batch` mode the file is skipped and processing continues with the next book.
+- **Why a dedicated code and early return:** encrypted bytes otherwise masquerade as other defects (the *Plot Against the President* fixture's encrypted nav was misreported as `NAV003`). `DRM001` short-circuits all other checks so the user gets one honest, authoritative answer.
+
+**Important distinction — font obfuscation is NOT DRM.** The IDPF/Adobe font-mangling schemes also use `encryption.xml`, but only to obfuscate embedded `.ttf/.otf/.woff` files. These EPUBs are fully repairable and must **not** be gated. The detector deliberately ignores encryption that targets only font resources.
+
+> **Future (opt-in):** de-obfuscating IDPF-mangled fonts during repair is a candidate feature. Actual DRM removal is explicitly out of scope — Colophon will only ever *report* it.
 
 ---
 

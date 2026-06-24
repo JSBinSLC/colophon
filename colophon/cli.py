@@ -100,6 +100,12 @@ def fix(
         if not dry_run:
             report.write(out_path)
 
+        if report.skipped_reason:
+            console.print(f"  [yellow]Skipped:[/yellow] {report.skipped_reason}")
+            if not dry_run:
+                console.print(f"  Report: [dim]{out_path}[/dim]")
+            continue
+
         summary = report.summary()
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_row("[green]Applied[/green]", str(summary["applied"]))

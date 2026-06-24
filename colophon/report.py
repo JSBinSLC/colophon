@@ -37,6 +37,8 @@ class RepairReport:
     validation_errors_after: int = 0
     validation_warnings_before: int = 0
     validation_warnings_after: int = 0
+    # Set when the pipeline declines to process a file at all (e.g. DRM).
+    skipped_reason: str | None = None
 
     def add(self, change: RepairChange) -> None:
         self.changes.append(change)
@@ -51,6 +53,7 @@ class RepairReport:
     def write(self, path: Path) -> None:
         data = {
             "source_epub": self.source_epub,
+            "skipped_reason": self.skipped_reason,
             "summary": self.summary(),
             "validation": {
                 "errors_before": self.validation_errors_before,
