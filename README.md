@@ -21,7 +21,7 @@ Active development (v0.1). Working stages:
 | Stage 4 — Chapter Split | ✅ | Splits monolithic spine HTML into per-chapter files; updates manifest and spine |
 | Stage 5 — TOC Rebuild | ✅ | Generates toc.ncx + nav.xhtml from in-document headings; fixes NCX001/NCX005/NCX008/NAV003/NAV004 |
 | Stage 7 — Repack | ✅ | Correct mimetype ordering, re-validation, repair report |
-| Stage 6 | Planned | CSS sanitization |
+| Stage 6 — CSS Sanitize | ✅ | Unused selector removal, em font sizes, night-mode color stripping, viewport meta |
 | Font obfuscation re-keying | Planned (v0.5) | Detects IDPF/Adobe-obfuscated fonts; re-keys them to the canonical UID so repaired EPUBs don't break embedded fonts |
 
 See [SPEC.md](SPEC.md) for full design and roadmap.
