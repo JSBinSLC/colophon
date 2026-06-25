@@ -16,9 +16,12 @@ Active development (v0.1). Working stages:
 |---|---|---|
 | Stage 0 — Unpack & Validate | ✅ | ZIP extraction, built-in EPUB validator, DRM gate |
 | Stage 1 — Semantic Graph | ✅ | NER via LLM (Anthropic/OpenAI/OpenRouter/Ollama), variant clustering, concurrent chunking, graph cache |
+| Stage 2 — HTML Repair | ✅ | Inline style removal, semantic tag restoration, header/footer artifact cleanup |
+| Stage 3 — Text Cleanup | ✅ | Ligature/mojibake repair, proper-noun canonicalisation, Tier-A coherence fixes, dinkus recovery |
+| Stage 4 — Chapter Split | ✅ | Splits monolithic spine HTML into per-chapter files; updates manifest and spine |
 | Stage 5 — TOC Rebuild | ✅ | Generates toc.ncx + nav.xhtml from in-document headings; fixes NCX001/NCX005/NCX008/NAV003/NAV004 |
 | Stage 7 — Repack | ✅ | Correct mimetype ordering, re-validation, repair report |
-| Stages 2–4, 6 | Planned | HTML repair, text cleanup, chapter detection, CSS sanitization |
+| Stage 6 | Planned | CSS sanitization |
 | Font obfuscation re-keying | Planned (v0.5) | Detects IDPF/Adobe-obfuscated fonts; re-keys them to the canonical UID so repaired EPUBs don't break embedded fonts |
 
 See [SPEC.md](SPEC.md) for full design and roadmap.
