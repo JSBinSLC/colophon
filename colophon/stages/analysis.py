@@ -20,6 +20,7 @@ import logging
 import re
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -288,15 +289,45 @@ def _build_graph(
     if config.llm.use_batch and config.llm.model.startswith("openai/"):
         partial_graphs = _build_graph_batch(config, chunks)
         if partial_graphs is None:
-            log.warning("Stage 1: batch unavailable, falling back to sequential")
-            partial_graphs = _sequential_analyze(adapter, chunks)
+            log.warning("Stage 1: batch unavailable, falling back to direct calls")
+            partial_graphs = _analyze_chunks(adapter, chunks, config.llm.max_concurrency)
     else:
-        partial_graphs = _sequential_analyze(adapter, chunks)
+        partial_graphs = _analyze_chunks(adapter, chunks, config.llm.max_concurrency)
 
     graph = empty_graph(source_sha256, config.llm.model)
     if partial_graphs:
         _merge_into(graph, partial_graphs)
     return graph
+
+
+def _analyze_chunks(
+    adapter: LLMAdapter, chunks: list[dict[str, Any]], max_concurrency: int
+) -> list[dict[str, Any]]:
+    """Analyze every chunk, optionally in parallel, preserving chunk order.
+
+    Order matters: _merge_into derives chapter ordering from the sequence of
+    partial responses, so results are reassembled by chunk index regardless of
+    completion order. Failed chunks (returned None by the backoff helper) are
+    dropped.
+    """
+    workers = max(1, min(max_concurrency, len(chunks)))
+    if workers == 1:
+        return _sequential_analyze(adapter, chunks)
+
+    log.info("Stage 1: analyzing %d chunks with concurrency=%d", len(chunks), workers)
+
+    def _work(i: int, chunk: dict[str, Any]) -> dict[str, Any] | None:
+        label = f"chunk {i + 1}/{len(chunks)}"
+        user_msg = f"Book passage ({label}):\n\n{chunk['text']}"
+        return _call_with_backoff(adapter, label, user_msg)
+
+    results: list[dict[str, Any] | None] = [None] * len(chunks)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(_work, i, c): i for i, c in enumerate(chunks)}
+        for fut in as_completed(futures):
+            results[futures[fut]] = fut.result()
+
+    return [r for r in results if r is not None]
 
 
 def _sequential_analyze(

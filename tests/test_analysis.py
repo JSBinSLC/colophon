@@ -15,6 +15,7 @@ import pytest
 from colophon.config import LLMConfig, OutputConfig, PipelineConfig
 from colophon.stages.analysis import (
     AnalysisStage,
+    _analyze_chunks,
     _build_graph,
     _build_graph_batch,
     _chunk_spine,
@@ -332,6 +333,46 @@ def test_analysis_stage_no_persist(tmp_path):
         stage.run(ctx)
 
     assert not epub.with_suffix(".colophon.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Concurrency (_analyze_chunks)
+# ---------------------------------------------------------------------------
+
+class _OrderProbeAdapter:
+    """Fake adapter that tags each response with its chunk number and sleeps
+    so that earlier chunks finish *last* — exposing any ordering bug."""
+
+    def __init__(self, fail_on: set[int] | None = None):
+        self._fail_on = fail_on or set()
+
+    def complete_json(self, system: str, user: str):
+        import re
+        import time
+
+        idx = int(re.search(r"chunk (\d+)/", user).group(1))
+        if idx in self._fail_on:
+            raise ValueError("simulated non-JSON response")
+        time.sleep(0.02 * (10 - idx))  # invert completion order vs. chunk order
+        return {"characters": [{"canonical": f"C{idx}", "variants": [], "occurrences": 1}]}
+
+
+def test_analyze_chunks_preserves_order_under_concurrency():
+    chunks = [{"text": f"t{i}", "hrefs": []} for i in range(4)]
+    partials = _analyze_chunks(_OrderProbeAdapter(), chunks, max_concurrency=4)
+    assert [p["characters"][0]["canonical"] for p in partials] == ["C1", "C2", "C3", "C4"]
+
+
+def test_analyze_chunks_drops_failures_keeps_order():
+    chunks = [{"text": f"t{i}", "hrefs": []} for i in range(4)]
+    partials = _analyze_chunks(_OrderProbeAdapter(fail_on={2}), chunks, max_concurrency=4)
+    assert [p["characters"][0]["canonical"] for p in partials] == ["C1", "C3", "C4"]
+
+
+def test_analyze_chunks_single_worker_is_sequential():
+    chunks = [{"text": f"t{i}", "hrefs": []} for i in range(3)]
+    partials = _analyze_chunks(_OrderProbeAdapter(), chunks, max_concurrency=1)
+    assert [p["characters"][0]["canonical"] for p in partials] == ["C1", "C2", "C3"]
 
 
 # ---------------------------------------------------------------------------

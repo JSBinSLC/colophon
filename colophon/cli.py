@@ -60,6 +60,8 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
               help="Ollama context window size in tokens (e.g. 262144).")
 @click.option("--chunk-chars", "max_chunk_chars", default=None, type=int, envvar="COLOPHON_MAX_CHUNK_CHARS",
               help="Max chars per Stage 1 chunk. Default 32K. Set large (e.g. 4000000) for single-shot on 1M-ctx models.")
+@click.option("--concurrency", "concurrency", default=None, type=int, envvar="COLOPHON_CONCURRENCY",
+              help="Chunks to analyze in parallel in Stage 1 (default 4). Use 1 for local Ollama or tight rate limits.")
 @click.option("--use-batch", "use_batch", is_flag=True,
               help="Use OpenAI Batch API (50% cheaper, up to 24h turnaround). Only valid for openai/ models.")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
@@ -75,6 +77,7 @@ def fix(
     ollama_url: str | None,
     num_ctx: int | None,
     max_chunk_chars: int | None,
+    concurrency: int | None,
     use_batch: bool,
     report_dir: Path | None,
 ) -> None:
@@ -90,6 +93,8 @@ def fix(
         config.llm.num_ctx = num_ctx
     if max_chunk_chars:
         config.llm.max_chunk_chars = max_chunk_chars
+    if concurrency is not None:
+        config.llm.max_concurrency = concurrency
     if use_batch:
         config.llm.use_batch = True
 

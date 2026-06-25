@@ -24,6 +24,10 @@ class LLMConfig(BaseModel):
     # Explicit output-token ceiling. None = resolve the model's documented max
     # at call time (falls back to the provider default if unknown).
     max_output_tokens: int | None = None
+    # Number of chunks to analyze concurrently in Stage 1. Cloud providers
+    # handle parallel requests well; lower to 1 for a local Ollama server or to
+    # stay under a tight rate limit.
+    max_concurrency: int = 4
     # Override the default 32K-char chunk cap. Set large (e.g. 4_000_000) to
     # send the whole book in one shot on 1M-context models like Gemini Flash.
     max_chunk_chars: int | None = None
