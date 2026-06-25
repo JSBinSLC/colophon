@@ -11,7 +11,7 @@ class ColophonPlugin(InterfaceActionBase):
     supported_platforms = ["windows", "osx", "linux"]
     author = "JSBinSLC"
     version = (0, 1, 0)
-    minimum_calibre_version = (6, 0, 0)
+    minimum_calibre_version = (9, 5, 0)
 
     actual_plugin = "calibre_plugins.colophon.ui:ColophonAction"
 

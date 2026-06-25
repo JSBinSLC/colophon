@@ -1,9 +1,11 @@
-Colophon EPUB Repair for Calibre
+Colophon EPUB Repair for Calibre (requires Calibre 9.5+)
 
 Repairs broken navigation, HTML structure, CSS, font obfuscation,
 OCR artifacts, and (with a cloud API key) proper noun consistency.
 
 Configure Preferences → Plugins → Colophon EPUB Repair to set your
-LLM model and API key. Structural repair works without a key.
+LLM model and API key. Structural repair works without a key; AI
+features assume a reasonably current Calibre — upgrade if you're
+paying for cloud models anyway.
 
 https://github.com/JSBinSLC/colophon
