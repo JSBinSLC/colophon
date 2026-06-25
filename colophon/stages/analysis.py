@@ -239,6 +239,33 @@ Rules:
 """
 
 
+_RECONCILE_SYSTEM_PROMPT = """\
+You are reconciling a character list extracted from a single book. Different \
+surface forms of one person often share no letters — a given name, a \
+patronymic, a surname, a diminutive, a title (e.g. "Pierre", "Pyotr \
+Kirillovich", "Bezukhov" are one character; "Raskolnikov", "Rodion Romanovich", \
+"Rodya" are one). Deterministic matching cannot link these; you can.
+
+You are given a JSON array of already-merged characters, each:
+  {"canonical": "string", "variants": ["string"], "gender": "male|female|nonbinary|unknown", "occurrences": number}
+
+Identify groups of entries that refer to the SAME person. Return JSON:
+{
+  "groups": [
+    {"members": ["canonical A", "canonical B"], "canonical": "best full name", "confidence": "high|medium|low", "reason": "string"}
+  ]
+}
+
+Rules:
+- ONLY group entries from the provided list, referenced by their exact canonical string. Never invent a name, never add a person not in the list.
+- Group only entries you are confident are the same character. When unsure, DO NOT group them — leaving two forms separate is far less harmful than wrongly fusing two distinct people.
+- Never group across clearly different genders (a "female" entry and a "male" entry are different people, even with a shared surname — spouses, siblings).
+- Use your knowledge of naming conventions, and of the work if you recognise it, only to decide grouping — not to introduce anything.
+- "canonical" for a group should be the fullest natural name among the members.
+- Singletons need not be returned. Return {"groups": []} if nothing should merge.
+"""
+
+
 def _call_with_backoff(
     adapter: LLMAdapter,
     label: str,
@@ -313,7 +340,110 @@ def _build_graph(
     graph = empty_graph(source_sha256, config.llm.model)
     if partial_graphs:
         _merge_into(graph, partial_graphs)
+
+    if config.llm.reconcile and len(graph["entities"]["characters"]) > 1:
+        characters, flags = _reconcile_characters(adapter, graph["entities"]["characters"])
+        graph["entities"]["characters"] = characters
+        if flags:
+            graph["reconciliation_flags"] = flags
+
     return graph
+
+
+def _reconcile_characters(
+    adapter: LLMAdapter, characters: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """LLM coreference over already-merged characters.
+
+    Links no-shared-substring aliases the deterministic pass cannot (given name
+    vs patronymic vs surname vs diminutive). Returns (characters, flags): only
+    HIGH-confidence groups are merged; medium/low groups are returned as flags
+    for the report so the reader can decide. On any failure the input list is
+    returned unchanged — reconciliation never breaks the graph.
+    """
+    payload = [
+        {"canonical": c["canonical"], "variants": c.get("variants", []),
+         "gender": c.get("gender", "unknown"), "occurrences": c.get("occurrences", 0)}
+        for c in characters
+    ]
+    user_msg = "Characters:\n\n" + json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        result = adapter.complete_json(_RECONCILE_SYSTEM_PROMPT, user_msg)
+        groups = result.get("groups", []) if isinstance(result, dict) else []
+    except Exception as exc:  # noqa: BLE001 - reconciliation is best-effort
+        log.warning("Stage 1: reconciliation failed (%s); keeping deterministic graph", type(exc).__name__)
+        return characters, []
+
+    by_canon = {c["canonical"].lower(): c for c in characters}
+    merged_canons: set[str] = set()
+    flags: list[dict[str, Any]] = []
+    new_records: list[dict[str, Any]] = []
+
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        members = [m for m in group.get("members", []) if isinstance(m, str)]
+        found = [by_canon[m.lower()] for m in members if m.lower() in by_canon]
+        # Need at least two real, not-yet-merged members to act on a group.
+        fresh = [c for c in found if c["canonical"].lower() not in merged_canons]
+        if len(fresh) < 2:
+            continue
+        confidence = str(group.get("confidence", "")).lower()
+        if confidence != "high":
+            flags.append({
+                "members": [c["canonical"] for c in fresh],
+                "suggested_canonical": group.get("canonical"),
+                "confidence": confidence or "unknown",
+                "reason": group.get("reason", ""),
+            })
+            continue
+        # Guardrail: never merge across distinct known genders.
+        genders = {c.get("gender", "unknown") for c in fresh} - {"unknown"}
+        if len(genders) > 1:
+            flags.append({
+                "members": [c["canonical"] for c in fresh],
+                "suggested_canonical": group.get("canonical"),
+                "confidence": "high",
+                "reason": "REJECTED: members span conflicting genders; " + str(group.get("reason", "")),
+            })
+            continue
+        new_records.append(_merge_character_group(fresh, group.get("canonical")))
+        merged_canons.update(c["canonical"].lower() for c in fresh)
+
+    survivors = [c for c in characters if c["canonical"].lower() not in merged_canons]
+    survivors.extend(new_records)
+    survivors.sort(key=lambda e: -e.get("occurrences", 0))
+    return survivors, flags
+
+
+def _merge_character_group(
+    members: list[dict[str, Any]], suggested_canonical: str | None
+) -> dict[str, Any]:
+    """Fuse a reconciled group into one character record, marked reconciled."""
+    surfaces: set[str] = set()
+    occurrences = 0
+    for c in members:
+        surfaces.add(c["canonical"])
+        surfaces.update(c.get("variants", []))
+        occurrences += c.get("occurrences", 0)
+    # Canonical: accept the LLM's suggested full name only if every token in it
+    # is grounded in the members' surface forms (so it composes existing names —
+    # e.g. "Pierre Bezukhov" from "Pierre" + "Bezukhov" — but never introduces a
+    # word that isn't in the text). Otherwise the highest-occurrence member.
+    surface_tokens = {t for s in surfaces for t in re.findall(r"[^\W_]+", s.lower())}
+    suggested_tokens = set(re.findall(r"[^\W_]+", (suggested_canonical or "").lower()))
+    if suggested_canonical and suggested_tokens and suggested_tokens <= surface_tokens:
+        canonical = suggested_canonical
+    else:
+        canonical = max(members, key=lambda c: c.get("occurrences", 0))["canonical"]
+    surfaces.discard(canonical)
+    return {
+        "canonical": canonical,
+        "variants": sorted(surfaces),
+        "occurrences": occurrences,
+        "gender": _merge_gender(members),
+        "reconciled": True,
+    }
 
 
 def _log_run_preview(

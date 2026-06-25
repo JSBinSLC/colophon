@@ -28,6 +28,10 @@ class LLMConfig(BaseModel):
     # handle parallel requests well; lower to 1 for a local Ollama server or to
     # stay under a tight rate limit.
     max_concurrency: int = 4
+    # Stage 1 LLM reconciliation pass: a final coreference call that groups
+    # no-shared-substring aliases the deterministic clustering can't (Pierre =
+    # Pyotr Kirillovich = Bezukhov). One extra LLM call; high-confidence only.
+    reconcile: bool = True
     # Override the default 32K-char chunk cap. Set large (e.g. 4_000_000) to
     # send the whole book in one shot on 1M-context models like Gemini Flash.
     max_chunk_chars: int | None = None

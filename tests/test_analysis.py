@@ -22,6 +22,7 @@ from colophon.stages.analysis import (
     _extract_spine_texts,
     _is_pollution,
     _merge_into,
+    _reconcile_characters,
     _resolve_graph_path,
     _sha256,
     empty_graph,
@@ -347,6 +348,75 @@ def test_merge_strips_polluted_variants():
     assert "Calvin" in variants
     assert "Dr. Calvin" in variants
     assert {"she", "the lady", "psychologist"} & variants == set()
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation pass (_reconcile_characters)
+# ---------------------------------------------------------------------------
+
+class _ReconcileAdapter:
+    """Fake adapter returning a canned reconciliation result."""
+
+    def __init__(self, groups=None, raises=False):
+        self._groups = groups or []
+        self._raises = raises
+
+    def complete_json(self, system, user):
+        if self._raises:
+            raise RuntimeError("model exploded")
+        return {"groups": self._groups}
+
+
+def _char(canonical, gender="unknown", occ=1, variants=None):
+    return {"canonical": canonical, "variants": variants or [], "gender": gender, "occurrences": occ}
+
+
+def test_reconcile_merges_high_confidence_no_shared_substring():
+    chars = [
+        _char("Pierre", "male", 200), _char("Bezukhov", "male", 80),
+        _char("Pyotr Kirillovich", "male", 30), _char("Helene", "female", 50),
+    ]
+    groups = [{"members": ["Pierre", "Bezukhov", "Pyotr Kirillovich"],
+               "canonical": "Pierre Bezukhov", "confidence": "high", "reason": "same man"}]
+    out, flags = _reconcile_characters(_ReconcileAdapter(groups), chars)
+    names = {c["canonical"] for c in out}
+    assert names == {"Pierre Bezukhov", "Helene"}
+    pierre = next(c for c in out if c["canonical"] == "Pierre Bezukhov")
+    assert pierre["occurrences"] == 310
+    assert pierre["reconciled"] is True
+    assert {"Pierre", "Bezukhov", "Pyotr Kirillovich"} <= set(pierre["variants"])
+    assert flags == []
+
+
+def test_reconcile_flags_low_confidence_without_merging():
+    chars = [_char("Strider", "male", 40), _char("Aragorn", "male", 60)]
+    groups = [{"members": ["Strider", "Aragorn"], "canonical": "Aragorn",
+               "confidence": "medium", "reason": "maybe"}]
+    out, flags = _reconcile_characters(_ReconcileAdapter(groups), chars)
+    assert {c["canonical"] for c in out} == {"Strider", "Aragorn"}  # not merged
+    assert len(flags) == 1 and flags[0]["confidence"] == "medium"
+
+
+def test_reconcile_rejects_cross_gender_merge():
+    chars = [_char("Mr. Weston", "male", 30), _char("Mrs. Weston", "female", 28)]
+    groups = [{"members": ["Mr. Weston", "Mrs. Weston"], "canonical": "Weston",
+               "confidence": "high", "reason": "same surname"}]
+    out, flags = _reconcile_characters(_ReconcileAdapter(groups), chars)
+    assert {c["canonical"] for c in out} == {"Mr. Weston", "Mrs. Weston"}  # stays split
+    assert flags and "REJECTED" in flags[0]["reason"]
+
+
+def test_reconcile_ignores_unknown_members():
+    chars = [_char("Kirk", "male", 100), _char("Spock", "male", 90)]
+    groups = [{"members": ["Kirk", "Khan"], "canonical": "Kirk", "confidence": "high"}]
+    out, _ = _reconcile_characters(_ReconcileAdapter(groups), chars)
+    assert {c["canonical"] for c in out} == {"Kirk", "Spock"}  # only 1 real member -> no-op
+
+
+def test_reconcile_survives_llm_failure():
+    chars = [_char("Kirk", "male", 100), _char("Spock", "male", 90)]
+    out, flags = _reconcile_characters(_ReconcileAdapter(raises=True), chars)
+    assert out == chars and flags == []
 
 
 def test_merge_deduplicates_chapters():
