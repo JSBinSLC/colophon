@@ -17,9 +17,11 @@ class ConfigWidget(QWidget):
         self.setLayout(layout)
 
         intro = QLabel(
-            "Structural repair (TOC, HTML, CSS, fonts) works without any API key.\n"
-            "For AI features — proper noun detection, semantic graph, smarter text "
-            "cleanup — configure a cloud model and its API key below."
+            "Requires Calibre 9.5+. Structural repair (TOC, HTML, CSS, fonts) "
+            "works without any API key.\n"
+            "For AI features — proper noun detection, semantic graph, smarter "
+            "text cleanup — configure a cloud model and its API key below. If "
+            "you're using paid AI, keep Calibre up to date."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)

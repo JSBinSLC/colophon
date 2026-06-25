@@ -9,6 +9,8 @@ Bundles:
 Usage (from repo root):
   python calibre-plugin/build.py
 
+Targets Calibre 9.5+ (matches its embedded Python for vendored wheels).
+
 Install in Calibre:
   Preferences → Plugins → Load plugin from file → select the ZIP
 """
