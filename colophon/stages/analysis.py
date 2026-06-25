@@ -100,15 +100,25 @@ class AnalysisStage(Stage):
             ctx["graph_path"] = graph_path
             return
 
-        # Probe the model before sending anything: pick up the real max output
-        # tokens (LiteLLM doesn't know them for OpenRouter models) and let
-        # _build_graph preview chunk count and cost.
-        info = probe_model(config.llm.model, config.llm.resolved_api_key())
-        if info.max_output_tokens and not config.llm.max_output_tokens:
-            config.llm.max_output_tokens = info.max_output_tokens
+        api_key = config.llm.resolved_api_key()
+        use_ollama = config.llm.model.startswith("ollama/")
 
-        adapter = LLMAdapter(config.llm)
-        graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
+        if config.llm.model.startswith("spacy/"):
+            log.info("Stage 1: using spaCy NER (%s)", config.llm.model)
+            graph = _build_graph_spacy(config, spine_texts, source_sha256)
+        elif not api_key and not use_ollama:
+            log.info("Stage 1: no LLM API key — falling back to spaCy NER")
+            graph = _build_graph_spacy(config, spine_texts, source_sha256)
+        else:
+            # Probe the model before sending anything: pick up the real max output
+            # tokens (LiteLLM doesn't know them for OpenRouter models) and let
+            # _build_graph preview chunk count and cost.
+            info = probe_model(config.llm.model, api_key)
+            if info.max_output_tokens and not config.llm.max_output_tokens:
+                config.llm.max_output_tokens = info.max_output_tokens
+
+            adapter = LLMAdapter(config.llm)
+            graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
 
         if config.output.persist_graph:
             graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -348,6 +358,52 @@ def _build_graph(
             graph["reconciliation_flags"] = flags
 
     return graph
+
+
+def _build_graph_spacy(
+    config: PipelineConfig,
+    spine_texts: list[dict[str, str]],
+    source_sha256: str,
+) -> dict[str, Any]:
+    """Build a minimal graph from spaCy NER when no LLM is available."""
+    from colophon.models.spacy_detector import extract_entities
+
+    combined = "\n\n".join(item["text"] for item in spine_texts)
+    partial = extract_entities(combined)
+    graph = empty_graph(source_sha256, "spacy/en_core_web_sm")
+    for category in ("characters", "places", "organizations", "invented_terms"):
+        entries = partial.get(category, [])
+        graph["entities"][category] = _cluster_and_merge(
+            entries, person_names=(category == "characters"),
+        )
+    _apply_hint_groups(graph, config)
+    return graph
+
+
+def _apply_hint_groups(graph: dict[str, Any], config: PipelineConfig) -> None:
+    """Seed HIGH-confidence alias groups from config hints."""
+    groups = config.hints.character_alias_groups
+    if not groups:
+        flat = config.hints.character_names
+        if flat:
+            groups = [[name] for name in flat]
+        else:
+            return
+
+    chars = graph["entities"]["characters"]
+    for group in groups:
+        names = [n.strip() for n in group if n and n.strip()]
+        if len(names) < 2:
+            continue
+        canonical = max(names, key=len)
+        variants = sorted(set(names) - {canonical})
+        chars.append({
+            "canonical": canonical,
+            "variants": variants,
+            "occurrences": 0,
+            "gender": "unknown",
+            "hint_seeded": True,
+        })
 
 
 def _reconcile_characters(

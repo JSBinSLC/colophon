@@ -7,7 +7,9 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from colophon.config import PipelineConfig
 from colophon.report import RepairReport
+from colophon.interactive import review_flagged_changes
 from colophon.stages.unpack import UnpackStage
+from colophon.stages.collection import CollectionDetectStage
 from colophon.stages.analysis import AnalysisStage
 from colophon.stages.html_repair import HtmlRepairStage
 from colophon.stages.text_cleanup import TextCleanupStage
@@ -24,6 +26,7 @@ def run(epub_path: Path, config: PipelineConfig) -> RepairReport:
 
     stages = [
         UnpackStage(),
+        CollectionDetectStage(),
         AnalysisStage(),
         HtmlRepairStage(),
         TextCleanupStage(),
@@ -51,5 +54,8 @@ def run(epub_path: Path, config: PipelineConfig) -> RepairReport:
             # A stage (e.g. unpack on a DRM file) can abort the whole run.
             if ctx.get("abort_reason"):
                 break
+
+        if not config.dry_run and config.interactive:
+            review_flagged_changes(ctx)
 
     return report
