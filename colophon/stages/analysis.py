@@ -255,7 +255,9 @@ def _build_graph(
     source_sha256: str,
 ) -> dict[str, Any]:
     """Run LLM analysis over all spine items (chunked if needed) and merge."""
-    if config.llm.num_ctx:
+    if config.llm.max_chunk_chars:
+        usable_chars = config.llm.max_chunk_chars
+    elif config.llm.num_ctx:
         context_chars = (config.llm.num_ctx - PROMPT_OVERHEAD_TOKENS) * CHARS_PER_TOKEN
         usable_chars = max(1, min(context_chars, MAX_CHUNK_CHARS))
     else:

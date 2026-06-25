@@ -50,13 +50,16 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
 @click.option("--dry-run", is_flag=True, help="Preview changes without applying them.")
 @click.option("--interactive", is_flag=True, help="Pause at low-confidence decisions.")
 @click.option("--rebuild-graph", is_flag=True, help="Force semantic graph rebuild.")
-@click.option("--llm", "llm_model", default=None, help="LLM model (e.g. anthropic/claude-haiku-4-5).")
-@click.option("--api-key", "api_key", default=None, envvar="ANTHROPIC_API_KEY",
-              help="Anthropic API key. Prefer setting ANTHROPIC_API_KEY in .env instead.")
+@click.option("--llm", "llm_model", default=None, envvar="COLOPHON_LLM_MODEL",
+              help="LLM model string (e.g. openrouter/z-ai/glm-5.2). Env: COLOPHON_LLM_MODEL")
+@click.option("--api-key", "api_key", default=None,
+              help="Explicit API key override for the active provider. Prefer ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY in .env.")
 @click.option("--ollama-url", "ollama_url", default=None, envvar="COLOPHON_OLLAMA_URL",
               help="Custom Ollama base URL (e.g. http://100.x.x.x:11434).")
 @click.option("--num-ctx", "num_ctx", default=None, type=int, envvar="COLOPHON_NUM_CTX",
               help="Ollama context window size in tokens (e.g. 262144).")
+@click.option("--chunk-chars", "max_chunk_chars", default=None, type=int, envvar="COLOPHON_MAX_CHUNK_CHARS",
+              help="Max chars per Stage 1 chunk. Default 32K. Set large (e.g. 4000000) for single-shot on 1M-ctx models.")
 @click.option("--use-batch", "use_batch", is_flag=True,
               help="Use OpenAI Batch API (50% cheaper, up to 24h turnaround). Only valid for openai/ models.")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
@@ -71,6 +74,7 @@ def fix(
     api_key: str | None,
     ollama_url: str | None,
     num_ctx: int | None,
+    max_chunk_chars: int | None,
     use_batch: bool,
     report_dir: Path | None,
 ) -> None:
@@ -80,10 +84,12 @@ def fix(
         config.llm.model = llm_model
     if api_key:
         config.llm.api_key = api_key
-    if ollama_url:
+    if ollama_url and config.llm.model.startswith("ollama/"):
         config.llm.api_base = ollama_url
-    if num_ctx:
+    if num_ctx and config.llm.model.startswith("ollama/"):
         config.llm.num_ctx = num_ctx
+    if max_chunk_chars:
+        config.llm.max_chunk_chars = max_chunk_chars
     if use_batch:
         config.llm.use_batch = True
 

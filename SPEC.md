@@ -20,6 +20,7 @@ EPUB files that originate from scanned books, OCR workflows, or poorly exported 
 - **Page numbering failures** — `epub:type="pagebreak"` markers missing, broken, or rendering as visible body text; `page-list` nav absent or misaligned
 - **Container violations** — malformed `content.opf`, wrong `mimetype` ordering, missing media types
 - **Format version drift** — EPUB 2 files that work nowhere modern, EPUB 3 files that break EPUB 2-only readers
+- **Broken font obfuscation** — EPUB embeds fonts using IDPF/Adobe obfuscation keyed to the book's unique ID; if that ID drifts during repair by another tool, all fonts render as garbage; Colophon detects and re-keys obfuscated fonts so the repaired file renders correctly
 
 Existing tools each address a slice of this:
 
@@ -66,6 +67,7 @@ Input EPUB
     • Extract to temp directory
     • Run Colophon's built-in pure-Python EPUB validator (validator.py), capture violations
     • DRM gate: if content is encrypted (Adobe ADEPT etc.), abort the run — skip, don't "repair" (see "DRM Handling")
+    • Font obfuscation audit: detect IDPF/Adobe-obfuscated fonts via encryption.xml; re-key them to the canonical UID so fonts survive the repair [planned]
     • Normalize container structure (mimetype, META-INF/container.xml)
     • Detect EPUB version (2 or 3), flag for optional upgrade
     │
@@ -260,7 +262,7 @@ Colophon **does not, and will not, break DRM.** DRM-protected EPUBs (e.g. Adobe 
 
 **Important distinction — font obfuscation is NOT DRM.** The IDPF/Adobe font-mangling schemes also use `encryption.xml`, but only to obfuscate embedded `.ttf/.otf/.woff` files. These EPUBs are fully repairable and must **not** be gated. The detector deliberately ignores encryption that targets only font resources.
 
-> **Future (opt-in):** de-obfuscating IDPF-mangled fonts during repair is a candidate feature. Actual DRM removal is explicitly out of scope — Colophon will only ever *report* it.
+> **Roadmap:** re-keying IDPF-mangled fonts is part of the v0.5 milestone (see Roadmap). Actual DRM removal is explicitly out of scope — Colophon will only ever *report* it.
 
 ---
 
@@ -319,7 +321,7 @@ colophon/
 | **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
 | **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1); **LLM reconciliation pass** for no-shared-substring aliases (Slavic naming), confidence-gated; Russian-novel stress fixtures + cluster purity/completeness scoring; proper noun consistency application (Stage 3); Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
-| **v0.5 — CSS + EPUB 2→3 Upgrade** | CSS sanitization, optional EPUB version upgrade path |
+| **v0.5 — CSS, Fonts + EPUB 2→3 Upgrade** | CSS sanitization, IDPF/Adobe font obfuscation re-keying (so repaired EPUBs don't break embedded fonts), optional EPUB version upgrade path |
 | **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable |
 | **Future — OCR Source Scanning** | Tesseract integration for non-text PDFs and Amazon Topaz `.tpz` files; ground-truth scan validation (provide a physical scan as reference to validate AI inferences) |
 | **Future — EPUB MCP Server** | An MCP server exposing book structure (chapters, entities, TOC) as navigable resources, enabling LLMs to reliably answer "summarize chapter 12" without hallucinating scope or getting confused about a structure they don't know how to effectively parse |

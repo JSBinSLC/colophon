@@ -5,6 +5,8 @@ Supports any provider LiteLLM understands:
   - anthropic/claude-sonnet-4-6      (cloud, larger context headroom)
   - openai/gpt-5.4-mini              (cloud; cheaper than Haiku; set OPENAI_API_KEY)
   - openai/gpt-5.4-nano              (cloud; cheapest extraction baseline)
+  - openrouter/z-ai/glm-5.2          (OpenRouter proxy; set OPENROUTER_API_KEY)
+  - openrouter/deepseek/deepseek-r2  (OpenRouter proxy; very cheap at scale)
   - ollama/gemma4:26b-mlx-bf16       (local/Tailnet Ollama, set api_base + num_ctx)
   - ollama/gemma3:12b                 (local Ollama, no key required)
 
@@ -19,6 +21,52 @@ from typing import Any
 import litellm
 
 from colophon.config import LLMConfig
+
+
+def _recover_truncated_json(text: str) -> Any | None:
+    """Best-effort recovery of a JSON response truncated by an output token limit.
+
+    Scans backwards from the end to find the last complete object boundary,
+    then closes any open array/object containers. Returns the parsed value on
+    success, None if the fragment is unrecoverable.
+    """
+    # Find the last complete top-level closing brace/bracket we can trust.
+    # Walk backwards looking for } that closes a top-level object inside an array.
+    for end in range(len(text), 0, -1):
+        candidate = text[:end]
+        # Close any unclosed array/object nesting.
+        depth_map = {"{": "}", "[": "]"}
+        stack: list[str] = []
+        in_str = False
+        escape = False
+        for ch in candidate:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\" and in_str:
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in ("{", "["):
+                stack.append(depth_map[ch])
+            elif ch in ("}", "]") and stack and stack[-1] == ch:
+                stack.pop()
+        if not stack:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        # Try closing all open containers and parsing.
+        closing = "".join(reversed(stack))
+        try:
+            return json.loads(candidate + closing)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 class LLMAdapter:
@@ -47,12 +95,19 @@ class LLMAdapter:
             kwargs["num_ctx"] = self._cfg.num_ctx
 
         response = litellm.completion(**kwargs)
-        return response.choices[0].message.content or ""
+        msg = response.choices[0].message
+        # Reasoning models (GLM, o1, DeepSeek-R1…) put the final answer in
+        # `content` after the think block. If content is absent, fall back to
+        # the raw reasoning text so callers always get a non-empty string.
+        return msg.content or getattr(msg, "reasoning", None) or ""
 
     def complete_json(self, system: str, user: str) -> Any:
         """Like complete(), but parse and return the JSON from the response.
 
-        Raises ValueError if the model returns non-JSON text.
+        Raises ValueError if the model returns non-JSON text that cannot be
+        recovered. When the output is truncated mid-array (output token limit
+        hit on large inputs), attempts to salvage complete objects from the
+        partial response before giving up.
         """
         raw = self.complete(system, user)
         text = raw.strip()
@@ -64,7 +119,12 @@ class LLMAdapter:
             text = text.lstrip("-").strip()
         try:
             return json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"LLM returned non-JSON response: {raw[:200]!r}"
-            ) from exc
+        except json.JSONDecodeError:
+            pass
+        # Output was truncated mid-stream (common when input fills most of the
+        # context window and the entity list overflows max_completion_tokens).
+        # Try to recover by closing the innermost open array/object.
+        recovered = _recover_truncated_json(text)
+        if recovered is not None:
+            return recovered
+        raise ValueError(f"LLM returned non-JSON response: {raw[:200]!r}")

@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field
 
 
 _PROVIDER_ENV_KEY: dict[str, str] = {
-    "anthropic/": "ANTHROPIC_API_KEY",
-    "openai/":    "OPENAI_API_KEY",
+    "anthropic/":   "ANTHROPIC_API_KEY",
+    "openai/":      "OPENAI_API_KEY",
+    "openrouter/":  "OPENROUTER_API_KEY",
 }
 
 
@@ -17,6 +18,9 @@ class LLMConfig(BaseModel):
     api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
     num_ctx: int | None = None      # Ollama context window override (tokens)
     timeout: int = 600
+    # Override the default 32K-char chunk cap. Set large (e.g. 4_000_000) to
+    # send the whole book in one shot on 1M-context models like Gemini Flash.
+    max_chunk_chars: int | None = None
     # OpenAI Batch API — 50% cheaper, async (up to 24h turnaround).
     # Only active for openai/* models; ignored by other providers.
     use_batch: bool = False

@@ -2,7 +2,7 @@
 
 > *"Because when you want to read a book, you want to read a book — not be a copy editor."*
 
-AI-assisted EPUB repair pipeline. Fixes broken navigation, OCR artifacts, header/footer bleed, inconsistent proper nouns, poor HTML structure, CSS disorder, and more — in a single command.
+Your one-stop EPUB fixer with AI smarts. Fixes broken navigation, OCR artifacts, header/footer bleed, inconsistent proper nouns, poor HTML structure, CSS disorder, broken font obfuscation, and more — in a single command.
 
 ```
 colophon fix book.epub
@@ -19,6 +19,7 @@ Active development (v0.1). Working stages:
 | Stage 5 — TOC Rebuild | ✅ | Generates toc.ncx + nav.xhtml from in-document headings; fixes NCX001/NCX005/NCX008/NAV003/NAV004 |
 | Stage 7 — Repack | ✅ | Correct mimetype ordering, re-validation, repair report |
 | Stages 2–4, 6 | Planned | HTML repair, text cleanup, chapter detection, CSS sanitization |
+| Font obfuscation re-keying | Planned (v0.5) | Detects IDPF/Adobe-obfuscated fonts; re-keys them to the canonical UID so repaired EPUBs don't break embedded fonts |
 
 See [SPEC.md](SPEC.md) for full design and roadmap.
 
