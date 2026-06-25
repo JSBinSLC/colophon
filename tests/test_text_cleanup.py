@@ -130,10 +130,16 @@ def test_stage_run_cleans_file(tmp_path):
     assert any(c.stage == "Stage 3" for c in ctx["report"].changes)
 
 
-def test_coherence_corpus_tier_a_and_negatives():
+def test_coherence_corpus_all_tiers():
+    # Entities a real graph for these books would carry (Kel/Jim are characters
+    # in The Lost Years) — needed so the entity-prefixed Tier B split can fire.
     graph = {
         "entities": {
-            "characters": [{"canonical": "Kirk", "variants": [], "occurrences": 1}],
+            "characters": [
+                {"canonical": "Kirk", "variants": [], "occurrences": 1},
+                {"canonical": "Kel", "variants": [], "occurrences": 1},
+                {"canonical": "Jim", "variants": [], "occurrences": 1},
+            ],
             "places": [],
             "organizations": [],
             "invented_terms": [{"canonical": "quark", "variants": [], "occurrences": 1}],
@@ -143,9 +149,15 @@ def test_coherence_corpus_tier_a_and_negatives():
     results = run_coherence_corpus(_FIXTURES / "coherence-cases.jsonl", graph)
     by_id = {r["id"]: r for r in results}
 
+    # Auto-applied tiers transform to the expected text.
     assert by_id["fused-word-tier-a"]["pass"]
     assert by_id["ocr-confusable-tier-a"]["pass"]
+    assert by_id["kelterrified"]["pass"], by_id["kelterrified"]["actual"]
+    # Already-correct and flag-only tiers must be left untouched.
     assert by_id["killed-not-a-defect"]["pass"]
+    assert by_id["world-knowledge-tier-c"]["pass"]      # flag-only, not auto-applied
+    assert by_id["unrecoverable-tier-d"]["pass"]
+    # Intentional non-sense must pass through unchanged.
     assert by_id["finnegans-wake-quark"]["pass"]
     assert by_id["finnegans-wake-thunderword"]["pass"]
 

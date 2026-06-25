@@ -19,24 +19,35 @@ def apply_tier_b_fused(
     entities: set[str],
     punctuation_bias: str = "—",
 ) -> tuple[str, list[RepairChange]]:
-    """Split fused entity+word tokens like Kelterrified → Kel—terrified."""
+    """Split a known entity fused with a following word, restoring the dropped
+    separator: "Kelterrified" → "Kel—terrified".
+
+    Applied (not just flagged) but at MEDIUM confidence: the *split* is
+    well-grounded (left is a known entity, right a known word), while the exact
+    separator is inferred from the book's punctuation distribution.
+    """
     changes: list[RepairChange] = []
-    for match in _FUSED_TOKEN.finditer(text):
+
+    def _repl(match: "re.Match[str]") -> str:
         token = match.group(0)
-        if _is_known_word(token.lower(), vocab) or token in entities:
-            continue
+        if token in entities or _is_known_word(token.lower(), vocab):
+            return token
         fix = _try_fused_split(token, vocab, entities, punctuation_bias)
-        if fix and fix != token:
-            text = text.replace(token, fix, 1)
-            changes.append(RepairChange(
-                stage="Stage 3",
-                description="Tier B fused-word repair",
-                confidence=Confidence.MEDIUM,
-                status=ChangeStatus.FLAGGED,
-                original=token,
-                replacement=fix,
-            ))
-    return text, changes
+        if not fix or fix == token:
+            return token
+        changes.append(RepairChange(
+            stage="Stage 3",
+            description="Tier B fused-word repair",
+            confidence=Confidence.MEDIUM,
+            status=ChangeStatus.APPLIED,
+            original=token,
+            replacement=fix,
+        ))
+        return fix
+
+    # re.sub with a function applies every match against original positions —
+    # no stale-offset bug from mutating the string mid-iteration.
+    return _FUSED_TOKEN.sub(_repl, text), changes
 
 
 def _try_fused_split(
@@ -45,11 +56,13 @@ def _try_fused_split(
     entities: set[str],
     sep: str,
 ) -> str | None:
-    for i in range(2, len(token) - 2):
+    """Split only when the LEFT side is a known entity and the RIGHT a known
+    word. Requiring an entity prefix is the strong signal of a separator dropped
+    after a name; it avoids mangling ordinary words ("Someone", "Forthe" — those
+    are dropped-space cases, not name fusions, left for other passes)."""
+    for i in range(2, len(token)):
         left, right = token[:i], token[i:]
-        left_ok = left in entities or _is_known_word(left, vocab)
-        right_ok = _is_known_word(right.lower(), vocab) or right.lower() in vocab
-        if left_ok and right_ok:
+        if left in entities and _is_known_word(right.lower(), vocab):
             return f"{left}{sep}{right}"
     return None
 
@@ -91,7 +104,11 @@ def detect_header_footer_lines(
 
     artifacts: set[str] = set()
     for line, n in counts.items():
-        if n >= min_repeat and (line in chapter_titles or line.isdigit() or len(line) < 40):
+        # Only treat a repeated section-edge line as a running header/footer when
+        # it clearly looks like one — a chapter title or a page number. The old
+        # "len(line) < 40" catch-all risked deleting legitimate short content
+        # (epigraphs, refrains, "PART ONE").
+        if n >= min_repeat and (line in chapter_titles or line.isdigit()):
             artifacts.add(line)
     return artifacts
 

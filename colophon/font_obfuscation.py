@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from pathlib import Path
-from typing import Any
 
 from lxml import etree
 
@@ -23,7 +22,10 @@ _ENC_NS = {"enc": "urn:oasis:names:tc:opendocument:xmlns:container"}
 
 
 def _sha1_key(identifier: str) -> bytes:
-    return hashlib.sha1(identifier.encode("utf-8")).digest()
+    # IDPF spec: strip ALL whitespace (space, tab, CR, LF) from the identifier
+    # before hashing — pretty-printed OPF often wraps/indents the value.
+    cleaned = "".join(identifier.split())
+    return hashlib.sha1(cleaned.encode("utf-8")).digest()
 
 
 def xor_font(data: bytearray, identifier: str, *, nbytes: int = _OBFUSCATE_BYTES) -> None:
@@ -63,21 +65,33 @@ def rekey_obfuscated_fonts(
     canonical_uid: str,
     source_uid: str | None = None,
 ) -> int:
-    """Re-key obfuscated fonts to canonical_uid. Returns count re-keyed."""
-    if not canonical_uid or (source_uid and source_uid == canonical_uid):
+    """Re-key IDPF-obfuscated fonts from source_uid to canonical_uid.
+
+    Returns the number re-keyed. No-op unless we KNOW the original UID and it
+    differs from the canonical one: without the key the fonts were obfuscated
+    with we cannot deobfuscate, and deobfuscating without re-obfuscating would
+    leave plaintext that readers still try to decode (garbling the font).
+    """
+    if not canonical_uid or not source_uid or source_uid == canonical_uid:
         return 0
 
-    old_uid = source_uid or canonical_uid
     changed = 0
     for entry in find_obfuscated_fonts(work_dir):
+        if entry["algorithm"] != IDPF_ALGORITHM:
+            # Adobe's scheme uses a different key derivation and length; applying
+            # IDPF math would corrupt it. Leave it untouched rather than break it.
+            log.warning(
+                "Font obfuscation: %s uses %s — Adobe re-keying unsupported, left as-is",
+                entry["uri"], entry["algorithm"],
+            )
+            continue
         font_path = work_dir / entry["uri"]
         if not font_path.exists():
             log.warning("Font obfuscation: %s listed in encryption.xml but missing", entry["uri"])
             continue
         data = bytearray(font_path.read_bytes())
-        xor_font(data, old_uid)
-        if source_uid and source_uid != canonical_uid:
-            xor_font(data, canonical_uid)
+        xor_font(data, source_uid)     # remove old obfuscation
+        xor_font(data, canonical_uid)  # apply new
         font_path.write_bytes(data)
         changed += 1
         log.info("Font obfuscation: re-keyed %s to UID %s", entry["uri"], canonical_uid[:16])
@@ -86,7 +100,7 @@ def rekey_obfuscated_fonts(
 
 def read_publication_uid(work_dir: Path) -> str | None:
     """Read the OPF unique-identifier text."""
-    from colophon.stages.opf_utils import DC_NS, read_opf
+    from colophon.stages.opf_utils import read_opf
 
     opf = read_opf(work_dir)
     if opf is None:

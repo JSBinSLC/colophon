@@ -120,6 +120,9 @@ class AnalysisStage(Stage):
             adapter = LLMAdapter(config.llm)
             graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
 
+        # Seed config-provided alias hints regardless of backend (LLM or spaCy).
+        _apply_hint_groups(graph, config)
+
         if config.output.persist_graph:
             graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -376,34 +379,49 @@ def _build_graph_spacy(
         graph["entities"][category] = _cluster_and_merge(
             entries, person_names=(category == "characters"),
         )
-    _apply_hint_groups(graph, config)
     return graph
 
 
 def _apply_hint_groups(graph: dict[str, Any], config: PipelineConfig) -> None:
-    """Seed HIGH-confidence alias groups from config hints."""
+    """Seed HIGH-confidence alias groups from config hints (any backend).
+
+    Merges each hint group into an existing character whose surface matches one
+    of the group's names, rather than blindly appending — otherwise a hint that
+    repeats an already-extracted name would create a duplicate record.
+    """
     groups = config.hints.character_alias_groups
     if not groups:
         flat = config.hints.character_names
-        if flat:
-            groups = [[name] for name in flat]
-        else:
+        if not flat:
             return
+        groups = [[name] for name in flat]
 
     chars = graph["entities"]["characters"]
     for group in groups:
         names = [n.strip() for n in group if n and n.strip()]
         if len(names) < 2:
             continue
-        canonical = max(names, key=len)
-        variants = sorted(set(names) - {canonical})
-        chars.append({
-            "canonical": canonical,
-            "variants": variants,
-            "occurrences": 0,
-            "gender": "unknown",
-            "hint_seeded": True,
-        })
+        lowered = {n.lower() for n in names}
+        existing = next(
+            (c for c in chars
+             if {c["canonical"].lower(), *(v.lower() for v in c.get("variants", []))} & lowered),
+            None,
+        )
+        if existing is not None:
+            surfaces = {existing["canonical"], *existing.get("variants", []), *names}
+            canonical = max(surfaces, key=len)
+            existing["canonical"] = canonical
+            existing["variants"] = sorted(surfaces - {canonical})
+            existing["hint_seeded"] = True
+        else:
+            canonical = max(names, key=len)
+            chars.append({
+                "canonical": canonical,
+                "variants": sorted(set(names) - {canonical}),
+                "occurrences": 0,
+                "gender": "unknown",
+                "hint_seeded": True,
+            })
 
 
 def _reconcile_characters(
