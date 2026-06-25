@@ -29,6 +29,7 @@ from lxml import etree
 
 from colophon.config import PipelineConfig
 from colophon.models.llm_adapter import LLMAdapter
+from colophon.models.model_info import ModelInfo, probe_model
 from colophon.stages import Stage
 
 log = logging.getLogger(__name__)
@@ -99,8 +100,15 @@ class AnalysisStage(Stage):
             ctx["graph_path"] = graph_path
             return
 
+        # Probe the model before sending anything: pick up the real max output
+        # tokens (LiteLLM doesn't know them for OpenRouter models) and let
+        # _build_graph preview chunk count and cost.
+        info = probe_model(config.llm.model, config.llm.resolved_api_key())
+        if info.max_output_tokens and not config.llm.max_output_tokens:
+            config.llm.max_output_tokens = info.max_output_tokens
+
         adapter = LLMAdapter(config.llm)
-        graph = _build_graph(adapter, config, spine_texts, source_sha256)
+        graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
 
         if config.output.persist_graph:
             graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -274,6 +282,7 @@ def _build_graph(
     config: PipelineConfig,
     spine_texts: list[dict[str, str]],
     source_sha256: str,
+    info: ModelInfo | None = None,
 ) -> dict[str, Any]:
     """Run LLM analysis over all spine items (chunked if needed) and merge."""
     if config.llm.max_chunk_chars:
@@ -285,6 +294,7 @@ def _build_graph(
         usable_chars = MAX_CHUNK_CHARS
 
     chunks = _chunk_spine(spine_texts, usable_chars)
+    _log_run_preview(config.llm.model, chunks, info)
 
     if config.llm.use_batch and config.llm.model.startswith("openai/"):
         partial_graphs = _build_graph_batch(config, chunks)
@@ -298,6 +308,24 @@ def _build_graph(
     if partial_graphs:
         _merge_into(graph, partial_graphs)
     return graph
+
+
+def _log_run_preview(
+    model: str, chunks: list[dict[str, Any]], info: ModelInfo | None
+) -> None:
+    """Log chunk count, input size, and an estimated cost before the run."""
+    total_chars = sum(len(c["text"]) for c in chunks)
+    in_tokens = total_chars // CHARS_PER_TOKEN
+    msg = f"Stage 1: {len(chunks)} chunk(s), ~{in_tokens:,} input tokens, model {model}"
+    if info and info.max_output_tokens:
+        msg += f" (max output {info.max_output_tokens:,}/chunk)"
+    if info and info.input_cost_per_token:
+        # Output size is unknown ahead of time; estimate it at ~20% of input
+        # (a rough ratio for entity extraction) for an order-of-magnitude figure.
+        in_cost = in_tokens * info.input_cost_per_token
+        out_cost = in_tokens * 0.2 * (info.output_cost_per_token or 0.0)
+        msg += f"; est. ~${in_cost + out_cost:.3f}"
+    log.info(msg)
 
 
 def _analyze_chunks(
