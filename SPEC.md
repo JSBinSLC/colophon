@@ -176,7 +176,8 @@ colophon fix war-and-peace.epub --llm openai/gpt-5.4-nano --use-batch
 - Exponential backoff covers **rate limits and transient server/network errors** (5xx, connection drops, timeouts); a single blip no longer drops a whole chunk's entities. Free-tier Anthropic keys (5 req/min, 10K tokens/min) still complete a full novel, just slowly.
 
 **Chunking & concurrency:**
-- Input is chunked to ≤ `--chunk-chars` (default `MAX_CHUNK_CHARS`, ~8K tokens). Large-context models can raise this to send a whole novel in one or a few chunks for the best cross-book entity resolution; local Ollama models are additionally bounded by `num_ctx`.
+- Input is chunked to ≤ `--chunk-chars` (default `MAX_CHUNK_CHARS`, ~8K tokens). The constraint is **output**, not input: each chunk's entity JSON must fit inside the model's max output tokens. Counter-intuitively, bigger chunks hurt — a whole-novel single chunk overflows the output ceiling and the graph truncates mid-extraction (and greedy decoding can fall into a repetition loop that exhausts the budget on garbage). Local Ollama models are additionally bounded by `num_ctx`.
+  - *Dogfooding (Brave New World, Gemini 2.5 Flash Lite):* default 32K chunking → 20 characters, 10 places, 20 invented terms; one 380K-char chunk → `finish_reason=length` at 64,783 output tokens, only 2 characters salvaged. Raise `--concurrency` to go faster, not `--chunk-chars`.
 - Chunks are analyzed concurrently (`--concurrency`, default 4) via a thread pool, results reassembled in chunk order so chapter ordering is preserved. Set `--concurrency 1` for a local Ollama server or a tight rate limit. (OpenAI `--use-batch` is the async alternative for overnight library runs.)
 
 **Caching:** the graph is keyed on `(source SHA-256, model, schema version)` — switching `--llm` for a model comparison rebuilds rather than silently reusing the prior model's graph.
