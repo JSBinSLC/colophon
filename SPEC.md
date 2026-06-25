@@ -155,17 +155,29 @@ Optionally, users can provide **hints via config** — e.g., `"character_names":
 
 ## Source Fidelity (the prime directive)
 
-Colophon repairs the book you have; it does not rewrite it toward some remembered "canonical" version. One invariant governs every AI-assisted change:
+Colophon **restores sense; it does not improve on the author.** The goal is never to find problems or to rewrite toward some remembered "canonical" version — it is to recover what was *supposed* to be there when conversion or OCR damaged it. Evidence is sought in strict priority order:
 
-> **The model's prior knowledge of a work may only rank or disambiguate candidates the source text already contains. It may never introduce, remove, or alter meaning-bearing content.**
+1. **The source text itself** — the entity graph, a dictionary, the book's own punctuation/spelling distribution, surrounding context. Preferred always.
+2. **Failing that, the LLM's world/book knowledge** — used **only** to answer "could this be what is supposed to be here?", and only for a tight, conservative restoration. This tier is a last resort: always flagged, never silently applied, and biased toward leaving the span alone when unsure.
 
-A model that happens to "know" *War and Peace* or *I, Robot* from training may use that knowledge to decide whether two extracted names are the same person, or to pick the correct spelling *among forms present in the text* — but it may not "correct" the user's translation to a different one, supply text that isn't there, or change a quote or fact to match its memory. Editions, translations, and abridgments diverge; the file is the ground truth, not the model's recollection. Every applied change must be justifiable by evidence **in the book** (the entity graph, a dictionary, the book's own punctuation/spelling distribution, surrounding context) and recorded in the repair report.
+> **The model may restore plausibly-intended text, but may never invent, embellish, "improve," or rewrite toward a different edition.** The test is *restoration*, not enhancement.
+
+A model that "knows" *War and Peace* or *I, Robot* may use that to disambiguate extracted names, pick the correct spelling among forms present in the text, or — as a last resort — posit a conservative restoration of clearly-damaged text. It may **not** "correct" the user's translation to a different one, supply content with no plausible basis, or change a quote or fact to match its memory. Because editions, translations, and abridgments diverge, world-knowledge recovery is safest for edition-independent damage (a garbled proper noun, a mangled common phrase) and should back off where wording is translation-specific. Every applied change cites its evidence tier in the repair report, and world-knowledge restorations are marked as such so the reader can see which changes came from the model rather than the file.
 
 ---
 
 ## Local Coherence Repair (Stage 3 sub-pass)
 
-The OCR/conversion defects that most break immersion are small and local: a reader (or a capable LLM) instantly sees "this doesn't make sense, but it should" even without external ground truth. The pass is framed around *that* question — **does this span read as valid prose, and if not, can the intended text be recovered from evidence?** — not around any single error type. Symptoms vary; the discipline is constant.
+The OCR/conversion defects that most break immersion are small and local: a reader (or a capable LLM) instantly sees "this doesn't make sense, but it should" even without external ground truth. The pass is framed around *that* question:
+
+> **The text should make sense here — does it? If not, can the intended text be recovered from evidence in the book? And if not even from the book, can it be recovered (very conservatively) from the LLM's embedded world/book knowledge?**
+
+We are not looking for problems; we are looking for *restoring sensible sense-making* — "could this be what is supposed to be here?" The framing is deliberately defect-agnostic; symptoms vary, the discipline is constant.
+
+**First, the harder question: is this nonsense a *defect*, or the author's *intent*?** Some books are supposed to read as nonsense — *Finnegans Wake* ("Three quarks for Muster Mark!"), Nadsat in *A Clockwork Orange*, phonetic dialect in *Riddley Walker*. The pass must establish intent before touching anything, at two levels:
+- *Book-level register*: a high baseline rate of non-dictionary tokens, neologisms, or dialect means the author is doing it on purpose — the pass drops to near-zero auto-fixing and flags only.
+- *Span-level intent*: a candidate that matches a known coinage (the `invented_terms` graph), an established dialect pattern, or that the LLM judges deliberate is left untouched.
+A book of intentional non-sense must come through **unchanged**; over-correction here is the worst failure mode.
 
 **Representative symptoms (open-ended, not a closed list):**
 - *Fused words* — a dropped separator collapses two tokens (`Kel—terrified` → `Kelterrified`). Splits into a known entity/word + a known word.
@@ -179,18 +191,24 @@ The OCR/conversion defects that most break immersion are small and local: a read
 2. **LLM adjudication** proposes the *minimal* intended text for a flagged span, under strict instruction: smallest possible edit, no meaning change, return the span unchanged if unsure.
 3. **Deterministic validation** gates the proposal: the edit must be small and local (bounded edit distance), must resolve to known-good tokens (dictionary or entity graph), and must not introduce or alter words. A proposal that fails validation becomes a *flag*, not an edit.
 
-**Confidence tiers (map to the existing confidence model):**
-- **Tier A — mechanical, ground truth available → auto-apply.** Unique resolution from dictionary or entity graph (`to gether`→`together`, `K1rk`→`Kirk`).
-- **Tier B — recoverable, but a judgment call → apply best, flag.** The split/join is certain; a secondary choice (which separator) is *inferred from the book's own evidence* and flagged (and offered under `--interactive`). The `Kelterrified` → `Kel—terrified` case lives here.
-- **Tier C — known-wrong but unrecoverable → flag only, never fabricate.** Genuinely missing or ambiguous text. Tell the reader; do not guess.
+**Confidence tiers (map to the existing confidence model), ordered by evidence source:**
+- **Tier A — mechanical, book ground truth → auto-apply.** Unique resolution from dictionary or entity graph (`to gether`→`together`, `K1rk`→`Kirk`).
+- **Tier B — recoverable from book evidence, judgment call → apply best, flag.** The split/join is certain; a secondary choice (which separator) is *inferred from the book's own evidence* and flagged (offered under `--interactive`). The `Kelterrified` → `Kel—terrified` case lives here.
+- **Tier C — world-knowledge restoration → flag, never silent.** The book offers no evidence, but the LLM can conservatively posit what was supposed to be there ("could this be it?"). Lowest confidence: never auto-applied, surfaced for review (or `--interactive` confirmation), marked as world-knowledge-derived, and biased toward leaving it alone. Restoration only — never enhancement.
+- **Tier D — unrecoverable → flag only, never fabricate.** Not recoverable even from world-knowledge. Tell the reader; do not guess.
 
 **Hard guardrails:**
+- Establish intent first — a book of deliberate non-sense (*Finnegans Wake*) must pass through unchanged. Over-correction is the worst failure mode.
 - Never alter invented terms or in-world coinages — the `invented_terms` graph protects deliberate spellings from being "corrected."
 - Never touch text that is already valid (a transcription misreading is not a file defect).
 - Bounded, local edits only — split/join/single-char substitution/punctuation insertion, never a rewrite.
-- Every change cites its evidence and tier in the repair report.
+- Every change cites its evidence and tier in the repair report; world-knowledge restorations are explicitly marked.
 
-**Validation corpus:** `tests/fixtures/coherence-cases.jsonl` captures real and synthetic cases (anchored by the real `Kelterrified` defect from *The Lost Years*), each labeled with its tier, expected output (or `null` for flag-only), and the evidence that justifies the call. Future Stage 3 tests run against it.
+**Validation corpus:** `tests/fixtures/coherence-cases.jsonl` captures real and synthetic cases, each labeled with its tier, expected output (or `null` for flag-only), and the evidence that justifies the call. It must include both directions:
+- *Defects to repair* — anchored by the real `Kelterrified` defect from *The Lost Years*.
+- *Intentional non-sense to leave alone* — adversarial negatives like *Finnegans Wake* ("Three quarks for Muster Mark!"), where the correct behavior is to change nothing. These guard against the worst failure mode.
+
+Future Stage 3 tests run against it; a passing run repairs every defect AND leaves every intentional-nonsense case untouched.
 
 ---
 
