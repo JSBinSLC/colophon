@@ -163,6 +163,82 @@ def test_merge_does_not_overcluster_distinct_entities():
     assert names == {"Kirk", "George Kirk"}
 
 
+def test_merge_links_title_surname_to_full_name():
+    """"Mr. Foster" and "Henry Foster" are the same person and must merge,
+    even though neither lists the other as a surface form."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Mr. Foster", "variants": ["Foster"], "occurrences": 17},
+            {"canonical": "Henry Foster", "variants": ["Henry"], "occurrences": 4},
+        ),
+    ]
+    _merge_into(graph, partials)
+    chars = graph["entities"]["characters"]
+    assert len(chars) == 1, f"Expected 1 Foster, got {[c['canonical'] for c in chars]}"
+    assert chars[0]["occurrences"] == 21
+    surfaces = {chars[0]["canonical"], *chars[0]["variants"]}
+    assert {"Mr. Foster", "Henry Foster", "Henry", "Foster"} <= surfaces
+
+
+def test_merge_links_rank_surname_to_full_name():
+    """Ranks count as titles: "Captain Kirk" → "James Kirk"."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Captain Kirk", "variants": [], "occurrences": 5},
+            {"canonical": "James Kirk", "variants": [], "occurrences": 9},
+        ),
+    ]
+    _merge_into(graph, partials)
+    assert len(graph["entities"]["characters"]) == 1
+
+
+def test_merge_does_not_link_bare_surname():
+    """A bare surname with no title is ambiguous (could be a relative) and is
+    left unmerged — the conservative half of the personal-name rule."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Foster", "variants": [], "occurrences": 10},
+            {"canonical": "Henry Foster", "variants": [], "occurrences": 4},
+        ),
+    ]
+    _merge_into(graph, partials)
+    names = {c["canonical"] for c in graph["entities"]["characters"]}
+    assert names == {"Foster", "Henry Foster"}
+
+
+def test_merge_does_not_link_mr_and_mrs():
+    """Different honorifics on the same surname are different people."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Mr. Foster", "variants": [], "occurrences": 10},
+            {"canonical": "Mrs. Foster", "variants": [], "occurrences": 8},
+        ),
+    ]
+    _merge_into(graph, partials)
+    names = {c["canonical"] for c in graph["entities"]["characters"]}
+    assert names == {"Mr. Foster", "Mrs. Foster"}
+
+
+def test_merge_title_surname_only_applies_to_characters():
+    """The personal-name rule must not touch places/orgs — "York" is not
+    "New York"."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        {"characters": [], "organizations": [], "invented_terms": [], "chapters": [],
+         "places": [
+            {"canonical": "Dr. York", "variants": [], "occurrences": 3},
+            {"canonical": "New York", "variants": [], "occurrences": 5},
+         ]},
+    ]
+    _merge_into(graph, partials)
+    names = {p["canonical"] for p in graph["entities"]["places"]}
+    assert names == {"Dr. York", "New York"}
+
+
 def test_merge_deduplicates_chapters():
     graph = empty_graph("abc", "test/model")
     chapter = {"index": 0, "title": "Chapter 1", "spine_item": "a.html", "first_line": "It was"}

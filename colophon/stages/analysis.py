@@ -504,7 +504,9 @@ def _merge_into(graph: dict[str, Any], partials: list[dict[str, Any]]) -> None:
     """
     for category in ("characters", "places", "organizations", "invented_terms"):
         entries = _collect_entries(partials, category)
-        graph["entities"][category] = _cluster_and_merge(entries)
+        graph["entities"][category] = _cluster_and_merge(
+            entries, person_names=(category == "characters")
+        )
 
     # Chapters: deduplicate by title, preserve order, re-index.
     seen_titles: set[str] = set()
@@ -548,13 +550,58 @@ def _collect_entries(partials: list[dict[str, Any]], category: str) -> list[dict
     return entries
 
 
-def _cluster_and_merge(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+# Honorific titles and ranks stripped when matching personal names. A formal
+# "Mr. Foster" reference is treated as the same person as the full name
+# "Henry Foster"; a bare surname ("Foster") is NOT, since it can't be told
+# apart from a relative who shares the surname (e.g. "Kirk" vs "George Kirk").
+_HONORIFICS = frozenset({
+    "mr", "mrs", "ms", "miss", "mx", "dr", "sir", "madam", "madame",
+    "monsieur", "mlle", "mme", "lord", "lady", "master", "st", "saint",
+    "prof", "professor", "rev", "reverend", "father", "captain", "capt",
+    "lieutenant", "lt", "commander", "cmdr", "admiral", "colonel", "col",
+    "major", "general", "gen", "sergeant", "sgt", "king", "queen", "prince",
+    "princess", "duke", "duchess", "count", "countess", "baron", "baroness",
+})
+
+
+def _name_parts(name: str) -> tuple[list[str], bool]:
+    """Split a name into (non-honorific tokens, had_honorific), lowercased."""
+    raw = re.findall(r"[^\W_]+", name.lower())
+    rest = [t for t in raw if t not in _HONORIFICS]
+    return rest, len(rest) < len(raw)
+
+
+def _same_person(a: str, b: str) -> bool:
+    """True if a "title + surname" form and a "given name + same surname" full
+    name denote the same person, e.g. "Mr. Foster" ↔ "Henry Foster".
+
+    Deliberately conservative: a *bare* surname with no title ("Foster", or
+    "Kirk" vs "George Kirk") is left alone, since it can't be distinguished from
+    a same-surname relative without semantic context — that is the job of the
+    planned LLM reconciliation pass.
+    """
+    pa, ha = _name_parts(a)
+    pb, hb = _name_parts(b)
+    if not pa or not pb or pa[-1] != pb[-1]:
+        return False
+    a_is_title_surname = ha and len(pa) == 1
+    b_is_title_surname = hb and len(pb) == 1
+    return (a_is_title_surname and len(pb) >= 2) or (b_is_title_surname and len(pa) >= 2)
+
+
+def _cluster_and_merge(
+    entries: list[dict[str, Any]], person_names: bool = False
+) -> list[dict[str, Any]]:
     """Group entries that refer to the same entity and merge each group.
 
     Two entries are linked when one's canonical form appears as a surface form
     (canonical or variant) of the other. Linking only on *canonical* matches —
     never variant-to-variant — avoids generic titles like "Admiral" wrongly
     bridging two distinct characters.
+
+    When ``person_names`` is set (the characters category), an additional pass
+    links a "title + surname" canonical (e.g. "Mr. Foster") to a "given name +
+    same surname" full name (e.g. "Henry Foster"). See _same_person.
     """
     n = len(entries)
     if n == 0:
@@ -582,6 +629,17 @@ def _cluster_and_merge(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for j in range(i + 1, n):
             if canons[i] in surfaces[j] or canons[j] in surfaces[i]:
                 union(i, j)
+
+    # Personal-name pass: link "Mr. Foster" → "Henry Foster" (title+surname to
+    # a full name sharing that surname). Bare surnames are intentionally left
+    # unmerged; see _same_person.
+    if person_names:
+        for i in range(n):
+            for j in range(i + 1, n):
+                if find(i) != find(j) and _same_person(
+                    entries[i]["canonical"], entries[j]["canonical"]
+                ):
+                    union(i, j)
 
     groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for i in range(n):

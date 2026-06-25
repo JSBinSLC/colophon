@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import click
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.logging import RichHandler
 from rich.table import Table
 
 from colophon import __version__
@@ -15,6 +17,24 @@ from colophon import pipeline
 load_dotenv()
 
 console = Console()
+
+
+def _configure_logging(verbose: bool) -> None:
+    """Surface Colophon's own log messages to the console.
+
+    Stage 1 warns about truncated responses, retries, and dropped chunks — these
+    must reach the user, not vanish. WARNING by default; --verbose adds the INFO
+    progress lines (concurrency, chunk counts). Third-party loggers (notably
+    LiteLLM's noisy provider chatter) stay quiet.
+    """
+    level = logging.INFO if verbose else logging.WARNING
+    logger = logging.getLogger("colophon")
+    logger.setLevel(level)
+    if not logger.handlers:
+        handler = RichHandler(console=console, show_time=False, show_path=False, markup=False)
+        logger.addHandler(handler)
+    logger.propagate = False
+    logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 
 
@@ -66,6 +86,8 @@ def _collect_epubs(inputs: tuple[Path, ...], batch: bool) -> list[Path]:
               help="Use OpenAI Batch API (50% cheaper, up to 24h turnaround). Only valid for openai/ models.")
 @click.option("--report-dir", "report_dir", default=None, type=click.Path(path_type=Path, file_okay=False),
               help="Write each repair report into this directory (default: alongside each EPUB).")
+@click.option("-v", "--verbose", "verbose", is_flag=True,
+              help="Show INFO-level progress (chunk counts, concurrency) in addition to warnings.")
 def fix(
     inputs: tuple[Path, ...],
     batch: bool,
@@ -80,8 +102,10 @@ def fix(
     concurrency: int | None,
     use_batch: bool,
     report_dir: Path | None,
+    verbose: bool,
 ) -> None:
     """Repair one or more EPUB files."""
+    _configure_logging(verbose)
     config = PipelineConfig(dry_run=dry_run, interactive=interactive, rebuild_graph=rebuild_graph)
     if llm_model:
         config.llm.model = llm_model

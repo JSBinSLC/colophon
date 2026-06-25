@@ -78,6 +78,9 @@ class LLMAdapter:
         # Silently drop params a given provider doesn't support (e.g.
         # response_format on a model without JSON mode) instead of erroring.
         litellm.drop_params = True
+        # Suppress LiteLLM's "Provider List" / "LiteLLM completion()" chatter so
+        # Colophon's own logging is what the user sees.
+        litellm.suppress_debug_info = True
 
     def _resolve_max_tokens(self) -> int | None:
         """Output-token ceiling to request, or None to use the provider default.
