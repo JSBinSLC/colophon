@@ -463,29 +463,71 @@ def _build_graph_batch(
     return partials
 
 
+def _split_text(text: str, max_chars: int) -> list[str]:
+    """Break text into pieces of at most max_chars, preferring paragraph breaks.
+
+    A spine item larger than the chunk size must be *split*, never truncated —
+    truncating silently drops most of a book that ships as a few big HTML files.
+    Paragraphs (\\n\\n) are kept intact where possible; a single paragraph longer
+    than max_chars is hard-split as a last resort.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    pieces: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    def flush() -> None:
+        nonlocal buf, buf_len
+        if buf:
+            pieces.append("\n\n".join(buf))
+            buf = []
+            buf_len = 0
+
+    for para in text.split("\n\n"):
+        # A paragraph that alone exceeds the window: flush, then hard-split it.
+        while len(para) > max_chars:
+            flush()
+            pieces.append(para[:max_chars])
+            para = para[max_chars:]
+        if buf and buf_len + len(para) + 2 > max_chars:
+            flush()
+        buf.append(para)
+        buf_len += len(para) + 2
+
+    flush()
+    return pieces
+
+
 def _chunk_spine(
     spine_texts: list[dict[str, str]], max_chars: int
 ) -> list[dict[str, Any]]:
-    """Group spine items into chunks that fit within max_chars."""
+    """Group spine items into chunks that fit within max_chars.
+
+    Oversized spine items are split into multiple pieces (see _split_text) so
+    the whole book is analyzed, not just the opening of each large file.
+    """
+    # Expand each spine item into segments no larger than max_chars.
+    segments: list[dict[str, str]] = []
+    for item in spine_texts:
+        for piece in _split_text(item["text"], max_chars):
+            segments.append({"href": item["href"], "text": piece})
+
     chunks: list[dict[str, Any]] = []
     current_parts: list[dict[str, str]] = []
     current_len = 0
 
-    for item in spine_texts:
-        text_len = len(item["text"])
-        if current_parts and current_len + text_len > max_chars:
+    for seg in segments:
+        if current_parts and current_len + len(seg["text"]) > max_chars:
             chunks.append({
                 "text": "\n\n---\n\n".join(p["text"] for p in current_parts),
                 "hrefs": [p["href"] for p in current_parts],
             })
             current_parts = []
             current_len = 0
-        # If a single item exceeds the window, truncate it.
-        text = item["text"]
-        if text_len > max_chars:
-            text = text[:max_chars]
-        current_parts.append({"href": item["href"], "text": text})
-        current_len += len(text)
+        current_parts.append(seg)
+        current_len += len(seg["text"])
 
     if current_parts:
         chunks.append({

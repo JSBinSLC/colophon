@@ -99,11 +99,28 @@ def test_chunk_spine_splits_on_overflow():
     assert len(chunks) == 2
 
 
-def test_chunk_spine_truncates_oversized_item():
+def test_chunk_spine_splits_oversized_item_without_loss():
+    """A spine item larger than max_chars must be split across chunks, not
+    truncated — every paragraph has to survive."""
+    paras = [f"Paragraph {i} mentions Character{i}." for i in range(200)]
+    items = [{"href": "a.html", "text": "\n\n".join(paras)}]
+    chunks = _chunk_spine(items, max_chars=500)
+
+    assert len(chunks) > 1
+    assert all(len(c["text"]) <= 500 for c in chunks)
+    combined = "\n".join(c["text"] for c in chunks)
+    # No content dropped: first, middle, and last paragraphs all present.
+    assert "Character0." in combined
+    assert "Character99." in combined
+    assert "Character199." in combined
+
+
+def test_chunk_spine_hard_splits_single_huge_paragraph():
+    """A single paragraph longer than max_chars is hard-split, not dropped."""
     items = [{"href": "a.html", "text": "X" * 2000}]
     chunks = _chunk_spine(items, max_chars=500)
-    assert len(chunks) == 1
-    assert len(chunks[0]["text"]) <= 500
+    assert all(len(c["text"]) <= 500 for c in chunks)
+    assert sum(c["text"].count("X") for c in chunks) == 2000
 
 
 # ---------------------------------------------------------------------------
