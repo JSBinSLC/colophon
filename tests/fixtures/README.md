@@ -88,3 +88,13 @@ in-book cast list.
 | NAV003 | EPUB 3 nav document is not well-formed XML | hidden-truth, sudden-rescue |
 | NAV004 | EPUB 3 nav document has no `epub:type="toc"` nav element | paradeisia |
 | DRM001 | DRM-protected (encrypted content) — gated, unrepairable | plot-against-president |
+
+#### Text-coherence & structural fixtures
+
+For the Stage 3 local-coherence pass and collection/omnibus structure. See SPEC.md
+→ "Local Coherence Repair" and "Collections & Editorial Apparatus".
+
+| Fixture | Purpose |
+|---|---|
+| `coherence-cases.jsonl` | Validation corpus for the coherence pass. Each line: a span, its tier (A auto / B apply+flag / C world-knowledge flag / D unrecoverable / `none` already-valid / `intentional` leave-alone), expected output (or `null`), and the justifying evidence. Anchored by the real `Kelterrified`→`Kel—terrified` defect (*The Lost Years*) and the *Finnegans Wake* adversarial negatives (the `quark` coinage and the 100-letter thunderword) that must pass through **unchanged**. Committed (text, not an EPUB). |
+| `complete-works-of-james-joyce.epub` | **Omnibus / "complete works" stress fixture** (Delphi). 567 spine items; Collection → Work → Chapter hierarchy; mixed genres; editorial apparatus (copyright, poem indexes, the Delphi catalogue). Critically, *Finnegans Wake* and *Dubliners* coexist in one file, forcing **per-work** register assessment. Source: Calibre library, not committed. |

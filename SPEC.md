@@ -212,6 +212,26 @@ Future Stage 3 tests run against it; a passing run repairs every defect AND leav
 
 ---
 
+## Collections & Editorial Apparatus (structural)
+
+Not every EPUB is one work. Omnibus and "complete works" editions pack many works — across genres — into a single file, wrapped in publisher apparatus. The pipeline's implicit two-level model (book → chapters) breaks on them. Grounding example, the *Complete Works of James Joyce* (Delphi) fixture: **567 spine items**, **28 top-level TOC entries** that are actually three different kinds of thing:
+
+- **Grouping labels** — `The Novels`, `The Short Stories`, `The Poetry Collections` (0 children). Section dividers, not works.
+- **Works** — `A Portrait of the Artist as a Young Man` (6), `Ulysses` (21 episodes), `Finnegans Wake` (25 sections), `Dubliners` (10 stories), `Exiles` (4 acts), poetry collections (37–77 poems each).
+- **Editorial apparatus / non-author content** — `Title page`, `COPYRIGHT`, `List of Poems in Chronological Order`, `List of Poems in Alphabetical Order`, `The Delphi Classics Catalogue` (ads for other books). None of this is Joyce's prose.
+
+This imposes three requirements that ripple across stages:
+
+1. **Recognize a true three-level hierarchy — Collection → Work → Chapter.** A "complete works" is detected (TOC grouping labels + many works + metadata), and work boundaries become first-class. Naive "each top-level navPoint is a chapter" is wrong here (it would treat `The Novels` as a chapter and miss that `Ulysses` contains 21).
+
+2. **Scope analysis per work, not per file (Stage 1 & 4).** The semantic graph must be built per work — Stephen Dedalus spans *Portrait*, *Stephen Hero*, and *Ulysses*, but entity counts, variant clusters, and chapter detection should not blend the three works into one soup. Work boundaries partition the graph.
+
+3. **Separate author text from apparatus (Stage 1 & 3).** Front matter, introductions, contents lists, indexes, and the publisher catalogue must be excluded from entity extraction (no "Delphi Classics" as an organization), from coherence repair (don't "fix" an alphabetical index), and from proper-noun canonicalization. Detection is structural (front/back-matter position) plus heading patterns (`Contents`, `List of`, `Catalogue`, `Copyright`, `Introduction`).
+
+**The cross-link to coherence repair:** because `Finnegans Wake` and `Dubliners` sit in the *same file*, the "is this nonsense a defect or intent?" register assessment must run **per work**, not per book. *Dubliners* is conventional prose and can be repaired normally; *Finnegans Wake* must be near-untouchable. A single book-level register would either over-protect *Dubliners* or under-protect *Finnegans Wake* — only per-work scoping gets both right. The omnibus is the fixture that forces this.
+
+---
+
 ## LLM / AI Backend
 
 Colophon uses **LiteLLM** as the AI abstraction layer, giving users a single config entry to swap between:
@@ -395,6 +415,7 @@ colophon/
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
 | **v0.5 — CSS, Fonts + EPUB 2→3 Upgrade** | CSS sanitization, IDPF/Adobe font obfuscation re-keying (so repaired EPUBs don't break embedded fonts), optional EPUB version upgrade path |
 | **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable |
+| **Future — Collections & Omnibus Support** | Detect "complete works"/anthology EPUBs; model the Collection → Work → Chapter hierarchy; scope the semantic graph and register assessment per work; separate author text from editorial apparatus (intros, indexes, publisher catalogues). Fixture: *Complete Works of James Joyce* (Delphi) |
 | **Future — OCR Source Scanning** | Tesseract integration for non-text PDFs and Amazon Topaz `.tpz` files; ground-truth scan validation (provide a physical scan as reference to validate AI inferences) |
 | **Future — EPUB MCP Server** | An MCP server exposing book structure (chapters, entities, TOC) as navigable resources, enabling LLMs to reliably answer "summarize chapter 12" without hallucinating scope or getting confused about a structure they don't know how to effectively parse |
 
