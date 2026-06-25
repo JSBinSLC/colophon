@@ -158,6 +158,7 @@ Colophon uses **LiteLLM** as the AI abstraction layer, giving users a single con
 - Anthropic (`claude-haiku-4-5`, `claude-sonnet-4-6`) — **current default for Stage 1** (`anthropic/claude-haiku-4-5`)
 - Local models via Ollama (`gemma3:12b`, `mistral`, etc.) — no API key; custom endpoints (e.g. Tailnet Mac Studio) via `--ollama-url` + `--num-ctx`
 - OpenAI (`gpt-5.4-mini`, `gpt-5.4-nano`, or any current tier) — set `OPENAI_API_KEY` in `.env` and use `--llm openai/<model-id>`; provider routing is automatic. Add `--use-batch` for the **OpenAI Batch API** (~50% cheaper, up to 24h turnaround — see below)
+- OpenRouter (`google/gemini-2.5-flash-lite`, `z-ai/glm-5.2`, `deepseek/deepseek-r2`, 200+ more) — set `OPENROUTER_API_KEY` in `.env` and use `--llm openrouter/<vendor>/<model-id>`; a single proxy for cheap large-context models
 - Any other LiteLLM-supported provider
 
 The LLM is **enhancing** decisions made by deterministic stages, not replacing them. If no LLM is configured, Colophon falls back to spaCy + regex for NER and chapter detection. The LLM accelerates and improves confidence; it is never a hard dependency for core repair.
@@ -168,10 +169,19 @@ The LLM is **enhancing** decisions made by deterministic stages, not replacing t
 colophon fix war-and-peace.epub --llm openai/gpt-5.4-nano --use-batch
 ```
 
-**Stage 1 reliability notes (from early dogfooding):**
-- Calls go through `LLMAdapter` with exponential backoff on `RateLimitError` (free-tier Anthropic keys are 5 req/min, 10K tokens/min — a full novel still completes, just slowly).
-- Input is chunked to ≤ `MAX_CHUNK_CHARS` (~8K tokens) so the JSON response is never truncated, regardless of the model's context window. Cloud models use the full cap; local Ollama models are additionally bounded by `num_ctx`.
-- Observed throughput on *The Lost Years* (~157K tokens): Haiku ≈ 3 min/book (~$0.04); `gemma4:26b` on a Tailnet Mac Studio ≈ 34 min/book. Haiku is both faster and produced cleaner variant clusters, hence the default. The Mac Studio is better suited to single-pass whole-book context experiments in the tournament.
+**How calls are made:**
+- All calls go through `LLMAdapter`. JSON extraction uses the provider's **native JSON mode** (`response_format=json_object`) so responses are guaranteed parseable; if a response is still truncated by the model's output-token ceiling, a recovery pass salvages the complete entities and logs a warning (tail entities for that chunk are lost — lower `--chunk-chars` or raise `max_output_tokens`).
+- **Temperature defaults to 0** — extraction is deterministic, so the graph is reproducible and the cache stays meaningful.
+- `max_tokens` is set to the model's documented max output where LiteLLM knows it, falling back to the provider default otherwise.
+- Exponential backoff covers **rate limits and transient server/network errors** (5xx, connection drops, timeouts); a single blip no longer drops a whole chunk's entities. Free-tier Anthropic keys (5 req/min, 10K tokens/min) still complete a full novel, just slowly.
+
+**Chunking & concurrency:**
+- Input is chunked to ≤ `--chunk-chars` (default `MAX_CHUNK_CHARS`, ~8K tokens). Large-context models can raise this to send a whole novel in one or a few chunks for the best cross-book entity resolution; local Ollama models are additionally bounded by `num_ctx`.
+- Chunks are analyzed concurrently (`--concurrency`, default 4) via a thread pool, results reassembled in chunk order so chapter ordering is preserved. Set `--concurrency 1` for a local Ollama server or a tight rate limit. (OpenAI `--use-batch` is the async alternative for overnight library runs.)
+
+**Caching:** the graph is keyed on `(source SHA-256, model, schema version)` — switching `--llm` for a model comparison rebuilds rather than silently reusing the prior model's graph.
+
+**Observed throughput on *The Lost Years* (~157K tokens):** Haiku ≈ 3 min/book (~$0.04); `gemma4:26b` on a Tailnet Mac Studio ≈ 34 min/book. Haiku produced cleaner variant clusters than the local model. With concurrency + large-context single-shot, OpenRouter Gemini 2.5 Flash Lite is the current cheap-and-fast tournament baseline.
 
 ---
 
