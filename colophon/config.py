@@ -18,6 +18,12 @@ class LLMConfig(BaseModel):
     api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
     num_ctx: int | None = None      # Ollama context window override (tokens)
     timeout: int = 600
+    # Extraction is a deterministic task — default to greedy decoding so the
+    # graph is reproducible run-to-run and the cache stays meaningful.
+    temperature: float = 0.0
+    # Explicit output-token ceiling. None = resolve the model's documented max
+    # at call time (falls back to the provider default if unknown).
+    max_output_tokens: int | None = None
     # Override the default 32K-char chunk cap. Set large (e.g. 4_000_000) to
     # send the whole book in one shot on 1M-context models like Gemini Flash.
     max_chunk_chars: int | None = None

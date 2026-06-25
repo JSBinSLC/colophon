@@ -16,11 +16,14 @@ Custom Ollama endpoints (e.g. a Mac Studio on your Tailnet):
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import litellm
 
 from colophon.config import LLMConfig
+
+log = logging.getLogger(__name__)
 
 
 def _recover_truncated_json(text: str) -> Any | None:
@@ -72,9 +75,27 @@ def _recover_truncated_json(text: str) -> Any | None:
 class LLMAdapter:
     def __init__(self, cfg: LLMConfig) -> None:
         self._cfg = cfg
-        litellm.set_verbose = False  # type: ignore[attr-defined]
+        # Silently drop params a given provider doesn't support (e.g.
+        # response_format on a model without JSON mode) instead of erroring.
+        litellm.drop_params = True
 
-    def complete(self, system: str, user: str) -> str:
+    def _resolve_max_tokens(self) -> int | None:
+        """Output-token ceiling to request, or None to use the provider default.
+
+        An explicit config value wins. Otherwise ask LiteLLM for the model's
+        documented max output; if the model is unknown (raises), return None so
+        the request omits max_tokens and the provider applies its own default.
+        """
+        if self._cfg.max_output_tokens:
+            return self._cfg.max_output_tokens
+        try:
+            return litellm.get_max_tokens(self._cfg.model)
+        except Exception:
+            return None
+
+    def complete(
+        self, system: str, user: str, response_format: dict[str, Any] | None = None
+    ) -> str:
         """Send a single system+user turn; return the assistant text."""
         api_key = self._cfg.resolved_api_key()
         kwargs: dict[str, Any] = {
@@ -84,7 +105,13 @@ class LLMAdapter:
                 {"role": "user", "content": user},
             ],
             "timeout": self._cfg.timeout,
+            "temperature": self._cfg.temperature,
         }
+        max_tokens = self._resolve_max_tokens()
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         if api_key:
             kwargs["api_key"] = api_key
         if self._cfg.api_base:
@@ -104,12 +131,13 @@ class LLMAdapter:
     def complete_json(self, system: str, user: str) -> Any:
         """Like complete(), but parse and return the JSON from the response.
 
-        Raises ValueError if the model returns non-JSON text that cannot be
-        recovered. When the output is truncated mid-array (output token limit
-        hit on large inputs), attempts to salvage complete objects from the
-        partial response before giving up.
+        Requests the provider's native JSON mode so the response is guaranteed
+        parseable. Raises ValueError if the model returns non-JSON text that
+        cannot be recovered. When the output is truncated mid-array (output
+        token limit hit on large inputs), attempts to salvage complete objects
+        from the partial response before giving up.
         """
-        raw = self.complete(system, user)
+        raw = self.complete(system, user, response_format={"type": "json_object"})
         text = raw.strip()
         if text.startswith("```"):
             lines = text.splitlines()
@@ -126,5 +154,11 @@ class LLMAdapter:
         # Try to recover by closing the innermost open array/object.
         recovered = _recover_truncated_json(text)
         if recovered is not None:
+            log.warning(
+                "LLM response truncated at %d chars (hit output token limit); "
+                "recovered partial JSON — tail entities for this chunk were lost. "
+                "Reduce --chunk-chars or raise max_output_tokens to capture them.",
+                len(text),
+            )
             return recovered
         raise ValueError(f"LLM returned non-JSON response: {raw[:200]!r}")

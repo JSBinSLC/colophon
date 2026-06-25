@@ -77,10 +77,17 @@ class AnalysisStage(Stage):
         graph_path = _resolve_graph_path(epub_path, config)
         source_sha256 = _sha256(epub_path)
 
-        # Cache hit: skip LLM if graph is current and --rebuild-graph not set.
+        # Cache hit: skip LLM only if the stored graph was built from the same
+        # source bytes, by the same model, under the same schema. Switching
+        # models (or bumping the schema) must force a rebuild — otherwise a
+        # model-comparison run silently reuses the previous model's graph.
         if not config.rebuild_graph and graph_path.exists():
             existing = json.loads(graph_path.read_text(encoding="utf-8"))
-            if existing.get("source_sha256") == source_sha256:
+            if (
+                existing.get("source_sha256") == source_sha256
+                and existing.get("model") == config.llm.model
+                and existing.get("schema_version") == GRAPH_SCHEMA_VERSION
+            ):
                 ctx["book_graph"] = existing
                 ctx["graph_path"] = graph_path
                 return
@@ -223,20 +230,33 @@ def _call_with_backoff(
     user_msg: str,
     max_retries: int = 5,
 ) -> dict | None:
-    """Call adapter.complete_json with exponential backoff on rate-limit errors."""
+    """Call adapter.complete_json with exponential backoff on transient errors.
+
+    Retries rate limits and transient server/network failures (5xx, connection
+    drops, timeouts) — anything that would otherwise silently drop an entire
+    chunk's entities. Non-JSON responses and other errors are not retried.
+    """
     import litellm
+
+    retryable = (
+        litellm.RateLimitError,
+        litellm.InternalServerError,
+        litellm.ServiceUnavailableError,
+        litellm.APIConnectionError,
+        litellm.Timeout,
+    )
 
     delay = 15.0
     for attempt in range(max_retries):
         try:
             return adapter.complete_json(_SYSTEM_PROMPT, user_msg)
-        except litellm.RateLimitError:
+        except retryable as exc:
             if attempt == max_retries - 1:
-                log.warning("Stage 1: %s hit rate limit, giving up after %d retries",
-                            label, max_retries)
+                log.warning("Stage 1: %s exhausted retries after %s, giving up",
+                            label, type(exc).__name__)
                 return None
-            log.warning("Stage 1: %s rate-limited, retrying in %.0fs (attempt %d/%d)",
-                        label, delay, attempt + 1, max_retries)
+            log.warning("Stage 1: %s transient error (%s), retrying in %.0fs (attempt %d/%d)",
+                        label, type(exc).__name__, delay, attempt + 1, max_retries)
             time.sleep(delay)
             delay = min(delay * 2, 120)
         except ValueError as exc:
@@ -330,6 +350,8 @@ def _build_graph_batch(
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user",   "content": f"Book passage (chunk {i + 1}/{len(chunks)}):\n\n{chunk['text']}"},
                 ],
+                "temperature": config.llm.temperature,
+                "response_format": {"type": "json_object"},
             },
         }
         for i, chunk in enumerate(chunks)

@@ -254,13 +254,14 @@ def test_analysis_stage_uses_cache(tmp_path):
     work_dir.mkdir()
     _extract_epub(epub, work_dir)
 
+    cfg = PipelineConfig()
+
     sha = _sha256(epub)
-    cached = empty_graph(sha, "cached/model")
+    # Cache hit requires the stored model to match the configured model.
+    cached = empty_graph(sha, cfg.llm.model)
     cached["entities"]["characters"] = [{"canonical": "CachedKirk", "variants": [], "occurrences": 1}]
     graph_path = epub.with_suffix(".colophon.json")
     graph_path.write_text(json.dumps(cached), encoding="utf-8")
-
-    cfg = PipelineConfig()
 
     with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
         stage = AnalysisStage()
@@ -269,6 +270,29 @@ def test_analysis_stage_uses_cache(tmp_path):
         MockAdapter.return_value.complete_json.assert_not_called()
 
     assert ctx["book_graph"]["entities"]["characters"][0]["canonical"] == "CachedKirk"
+
+
+def test_analysis_stage_rebuilds_when_model_differs(tmp_path):
+    """A cached graph built by a different model must not be reused."""
+    epub = _make_epub(tmp_path, {"ch1.html": "Kirk."})
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _extract_epub(epub, work_dir)
+
+    sha = _sha256(epub)
+    cached = empty_graph(sha, "some-other/model")
+    cached["entities"]["characters"] = [{"canonical": "CachedKirk", "variants": [], "occurrences": 1}]
+    graph_path = epub.with_suffix(".colophon.json")
+    graph_path.write_text(json.dumps(cached), encoding="utf-8")
+
+    cfg = PipelineConfig()  # default model differs from the stored "some-other/model"
+
+    with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
+        MockAdapter.return_value.complete_json.return_value = MOCK_RESPONSE
+        stage = AnalysisStage()
+        ctx: dict = {"epub_path": epub, "config": cfg, "work_dir": work_dir}
+        stage.run(ctx)
+        MockAdapter.return_value.complete_json.assert_called()
 
 
 def test_analysis_stage_rebuild_graph_ignores_cache(tmp_path):
