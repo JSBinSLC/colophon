@@ -46,3 +46,6 @@ tmp_epub_*/
 
 # Test fixtures — copyrighted EPUBs are not committed; see tests/fixtures/README.md
 tests/fixtures/*.epub
+# Public-domain corpus fetched on demand by public-domain/fetch.py (not committed).
+# The small committed seeds (public-domain/pd-*.epub) sit in a subfolder and are tracked.
+tests/fixtures/public-domain/_fetched/

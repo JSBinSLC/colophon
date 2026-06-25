@@ -1,0 +1,41 @@
+{
+  "_comment": "Curated public-domain EPUBs fetched on demand by fetch.py into _fetched/ (gitignored). The works are public domain; provenance/licensing noted per entry. Standard Ebooks dedicate their productions to the public domain (CC0); Project Gutenberg files carry the PG trademark + license boilerplate (permissive redistribution). Edit freely; fetch.py skips entries already present.",
+  "books": [
+    {
+      "slug": "david-copperfield-standardebooks.epub",
+      "title": "David Copperfield",
+      "author": "Charles Dickens",
+      "source": "standardebooks",
+      "license": "CC0 / public domain (Standard Ebooks dedication)",
+      "url": "https://standardebooks.org/ebooks/charles-dickens/david-copperfield/downloads/charles-dickens_david-copperfield.epub",
+      "tests": "clean, well-structured EPUB3 baseline; large novel; the 'do not break valid files' case"
+    },
+    {
+      "slug": "david-copperfield-gutenberg.epub",
+      "title": "David Copperfield",
+      "author": "Charles Dickens",
+      "source": "gutenberg",
+      "license": "Public-domain text; file carries Project Gutenberg trademark/license boilerplate",
+      "url": "https://www.gutenberg.org/cache/epub/766/pg766.epub",
+      "tests": "older auto-generated structure to contrast against the Standard Ebooks edition of the same work"
+    },
+    {
+      "slug": "dubliners-standardebooks.epub",
+      "title": "Dubliners",
+      "author": "James Joyce",
+      "source": "standardebooks",
+      "license": "CC0 / public domain (Standard Ebooks dedication)",
+      "url": "https://standardebooks.org/ebooks/james-joyce/dubliners/downloads/james-joyce_dubliners.epub",
+      "tests": "conventional Joyce prose — the 'repair normally' counterpart to Finnegans Wake's intentional non-sense"
+    },
+    {
+      "slug": "alices-adventures-in-wonderland-gutenberg.epub",
+      "title": "Alice's Adventures in Wonderland",
+      "author": "Lewis Carroll",
+      "source": "gutenberg",
+      "license": "Public-domain text; file carries Project Gutenberg trademark/license boilerplate",
+      "url": "https://www.gutenberg.org/cache/epub/11/pg11.epub",
+      "tests": "small illustrated edition; coined words ('Jabberwocky' vocabulary) as a coinage-vs-defect check"
+    }
+  ]
+}
