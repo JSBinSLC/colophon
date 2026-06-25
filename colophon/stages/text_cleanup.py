@@ -46,7 +46,10 @@ _CARET_NOISE = re.compile(r"\^+|\{\d+\}")
 _DINKUS = re.compile(r"^\s*(\*\s*){3,}\s*$")
 _SPLIT_WORD = re.compile(r"\b([A-Za-z]+) ([A-Za-z]{2,})\b")
 _OCR_DIGIT_CONFUSABLE = re.compile(r"\b([A-Z][0-9OIl][a-z]+)\b")
-_HYPHEN_BREAK = re.compile(r"(\w)-\s*\n\s*(\w)")
+# Capture the FULL word fragments around a line-break hyphen, not just the
+# boundary characters — we decide to join on whether the whole word is real
+# ("exam-\nple" -> "example"), not whether two stray letters happen to be.
+_HYPHEN_BREAK = re.compile(r"(\w+)-\s*\n\s*(\w+)")
 _CR_MIDLINE = re.compile(r"(?<=\w)\r(?=\w)")
 _COMMON_WORDS = frozenset({
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -89,21 +92,22 @@ class TextCleanupStage(Stage):
             item.abs_path.read_text(encoding="utf-8", errors="replace")
             for item in content_spine_items(opf)
         ]
+        joined = "\n".join(spine_blobs)
         header_footer = detect_header_footer_lines(spine_blobs, chapter_titles)
-        punct_bias = "—" if spine_blobs.count("—") >= spine_blobs.count(";") else ";"
+        # Infer the dominant break punctuation from the book's own text (count
+        # characters across the whole book, not list elements).
+        punct_bias = "—" if joined.count("—") >= joined.count(";") else ";"
+        book_register = _assess_register(book_graph, joined)
         file_changes = 0
         dinkus_count = 0
 
         for item in content_spine_items(opf):
             if works and is_apparatus(works, item.href):
                 continue
-            register = (
-                register_for_href(works, item.href)
-                if works else _assess_register(book_graph)
-            )
+            register = register_for_href(works, item.href) if works else book_register
             raw = item.abs_path.read_bytes()
             soup = BeautifulSoup(raw, "html5lib")
-            _remove_artifact_lines(soup, header_footer)
+            _remove_artifact_lines(soup, header_footer, report, item.href)
             text_changed, dinkus = _cleanup_document(
                 soup, vocab, replacements, ocr_map, register, item.href, report,
                 entities=entities, punct_bias=punct_bias,
@@ -175,15 +179,47 @@ def _entity_names(book_graph: dict[str, Any]) -> set[str]:
     return names
 
 
-def _remove_artifact_lines(soup: BeautifulSoup, artifacts: set[str]) -> None:
+def _remove_artifact_lines(
+    soup: BeautifulSoup, artifacts: set[str], report: Any = None, location: str = ""
+) -> None:
+    """Remove running-header/footer artifact lines, recording each removal."""
     for tag in list(soup.find_all(["p", "div", "span"])):
         text = tag.get_text(" ", strip=True)
-        if text in artifacts:
+        if text and text in artifacts:
             tag.decompose()
+            if report is not None:
+                report.add(RepairChange(
+                    stage="Stage 3",
+                    description="Removed running header/footer line",
+                    confidence=Confidence.MEDIUM,
+                    status=ChangeStatus.APPLIED,
+                    location=location,
+                    original=text[:120],
+                ))
+
+
+_ENGLISH_WORDS: frozenset[str] | None = None
+
+
+def _english_dictionary() -> frozenset[str]:
+    """Real English word list (pyspellchecker, ~160k words), loaded once.
+
+    Returns an empty set if the optional dependency is missing, in which case
+    callers fall back to _COMMON_WORDS + graph entities — degraded, not broken.
+    """
+    global _ENGLISH_WORDS
+    if _ENGLISH_WORDS is None:
+        try:
+            from spellchecker import SpellChecker
+            _ENGLISH_WORDS = frozenset(SpellChecker().word_frequency.dictionary.keys())
+        except Exception:  # noqa: BLE001 - dictionary is best-effort
+            log.warning("Stage 3: pyspellchecker unavailable; coherence uses a reduced word list")
+            _ENGLISH_WORDS = frozenset()
+    return _ENGLISH_WORDS
 
 
 def _build_vocabulary(book_graph: dict[str, Any]) -> set[str]:
-    words = set(_COMMON_WORDS)
+    words = set(_COMMON_WORDS) | set(_english_dictionary())
     for category in ("characters", "places", "organizations", "invented_terms"):
         for entity in book_graph.get("entities", {}).get(category, []):
             for surface in [entity.get("canonical", "")] + entity.get("variants", []):
@@ -225,12 +261,27 @@ def _build_ocr_confusable_map(book_graph: dict[str, Any]) -> dict[str, str]:
     return mapping
 
 
-def _assess_register(book_graph: dict[str, Any]) -> str:
-    """Return 'conventional' or 'neologistic' based on invented-term density."""
+def _assess_register(book_graph: dict[str, Any], text: str = "") -> str:
+    """Return 'conventional' or 'neologistic' for the text.
+
+    Prefers out-of-vocabulary *density* against a real dictionary: deliberate
+    non-sense (Finnegans Wake, Nadsat, heavy dialect) has a high fraction of
+    non-dictionary words, whereas ordinary prose — even sci-fi with many coined
+    terms — stays low (the coinages are a small share of all tokens). The old
+    "count invented_terms" signal wrongly flagged genre fiction (i-robot had
+    107). Falls back to that count only when no text or dictionary is available.
+    """
+    dictionary = _english_dictionary()
+    words = re.findall(r"[A-Za-z]{2,}", text) if text else []
+    if dictionary and len(words) >= 200:
+        known = sum(1 for w in words if w.lower() in dictionary)
+        oov_fraction = 1.0 - known / len(words)
+        # Conservative: only very high OOV reads as deliberate non-sense, so we
+        # bias toward repairing (over-correction is the worse failure mode).
+        return "neologistic" if oov_fraction > 0.30 else "conventional"
+
     invented = book_graph.get("entities", {}).get("invented_terms", [])
-    if len(invented) >= 8:
-        return "neologistic"
-    return "conventional"
+    return "neologistic" if len(invented) >= 8 else "conventional"
 
 
 def _is_known_word(word: str, vocab: set[str]) -> bool:
@@ -391,6 +442,7 @@ def run_coherence_corpus(corpus_path: Path, graph: dict[str, Any] | None = None)
     """Exercise Tier-A/negative cases from coherence-cases.jsonl (for tests)."""
     graph = graph or {}
     vocab = _build_vocabulary(graph)
+    entities = _entity_names(graph)
     ocr_map = _build_ocr_confusable_map(graph)
     register = _assess_register(graph)
     replacements = _build_replacement_map(graph)
@@ -401,17 +453,19 @@ def run_coherence_corpus(corpus_path: Path, graph: dict[str, Any] | None = None)
             continue
         case = json.loads(line)
         broken = case["broken"]
-        context = case["context"]
         tier = case["tier"]
         expected = case.get("expected")
 
-        actual_token = _clean_text(broken, vocab, replacements, ocr_map, register)
+        actual_token = _clean_text(
+            broken, vocab, replacements, ocr_map, register,
+            entities=entities, punct_bias="—",
+        )
         if tier in ("intentional", "none"):
-            passed = actual_token == broken
-        elif tier == "A":
-            passed = expected is not None and actual_token == expected
-        elif tier in ("B", "C", "D"):
-            passed = True  # not auto-applied in this pass
+            passed = actual_token == broken            # must be left untouched
+        elif tier in ("A", "B"):
+            passed = expected is not None and actual_token == expected  # auto-applied tiers
+        elif tier in ("C", "D"):
+            passed = actual_token == broken            # flag-only: not auto-applied here
         else:
             passed = True
 
