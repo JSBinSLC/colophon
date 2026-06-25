@@ -166,18 +166,19 @@ def test_merge_clusters_distinct_canonicals_of_same_entity():
 
 
 def test_merge_does_not_overcluster_distinct_entities():
-    """A shared canonical-as-variant link is required; a merely similar name
-    that is no one's canonical surface form must stay separate."""
+    """Two full names sharing a surname are distinct people and must stay
+    separate; a bare "Kirk" is ambiguous between them and is also left alone."""
     graph = empty_graph("abc", "test/model")
     partials = [
         _chars(
-            {"canonical": "Kirk", "variants": ["Jim", "Captain Kirk"], "occurrences": 200},
+            {"canonical": "James Kirk", "variants": ["Jim"], "occurrences": 200},
             {"canonical": "George Kirk", "variants": ["George", "Jim's father"], "occurrences": 3},
+            {"canonical": "Kirk", "variants": [], "occurrences": 50},
         ),
     ]
     _merge_into(graph, partials)
     names = {c["canonical"] for c in graph["entities"]["characters"]}
-    assert names == {"Kirk", "George Kirk"}
+    assert names == {"James Kirk", "George Kirk", "Kirk"}
 
 
 def test_merge_links_title_surname_to_full_name():
@@ -211,9 +212,9 @@ def test_merge_links_rank_surname_to_full_name():
     assert len(graph["entities"]["characters"]) == 1
 
 
-def test_merge_does_not_link_bare_surname():
-    """A bare surname with no title is ambiguous (could be a relative) and is
-    left unmerged — the conservative half of the personal-name rule."""
+def test_merge_links_bare_surname_when_surname_is_unique():
+    """A bare surname merges into the full name when only one person has that
+    surname — there's no one else it could refer to."""
     graph = empty_graph("abc", "test/model")
     partials = [
         _chars(
@@ -222,8 +223,24 @@ def test_merge_does_not_link_bare_surname():
         ),
     ]
     _merge_into(graph, partials)
+    chars = graph["entities"]["characters"]
+    assert len(chars) == 1
+    assert chars[0]["occurrences"] == 14
+
+
+def test_merge_does_not_link_bare_surname_when_ambiguous():
+    """A bare surname shared by two full names stays separate (ambiguous)."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Foster", "variants": [], "occurrences": 10},
+            {"canonical": "Henry Foster", "variants": [], "occurrences": 4},
+            {"canonical": "Jack Foster", "variants": [], "occurrences": 3},
+        ),
+    ]
+    _merge_into(graph, partials)
     names = {c["canonical"] for c in graph["entities"]["characters"]}
-    assert names == {"Foster", "Henry Foster"}
+    assert names == {"Foster", "Henry Foster", "Jack Foster"}
 
 
 def test_merge_does_not_link_mr_and_mrs():

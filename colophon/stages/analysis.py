@@ -620,10 +620,8 @@ def _collect_entries(partials: list[dict[str, Any]], category: str) -> list[dict
     return entries
 
 
-# Honorific titles and ranks stripped when matching personal names. A formal
-# "Mr. Foster" reference is treated as the same person as the full name
-# "Henry Foster"; a bare surname ("Foster") is NOT, since it can't be told
-# apart from a relative who shares the surname (e.g. "Kirk" vs "George Kirk").
+# Honorific titles and ranks stripped when matching personal names, so that
+# "Mr. Foster" / "Captain Kirk" reduce to their surname for comparison.
 _HONORIFICS = frozenset({
     "mr", "mrs", "ms", "miss", "mx", "dr", "sir", "madam", "madame",
     "monsieur", "mlle", "mme", "lord", "lady", "master", "st", "saint",
@@ -634,29 +632,14 @@ _HONORIFICS = frozenset({
 })
 
 
-def _name_parts(name: str) -> tuple[list[str], bool]:
-    """Split a name into (non-honorific tokens, had_honorific), lowercased."""
-    raw = re.findall(r"[^\W_]+", name.lower())
-    rest = [t for t in raw if t not in _HONORIFICS]
-    return rest, len(rest) < len(raw)
+def _name_parts(name: str) -> list[str]:
+    """Lowercased name tokens with honorific titles removed.
 
-
-def _same_person(a: str, b: str) -> bool:
-    """True if a "title + surname" form and a "given name + same surname" full
-    name denote the same person, e.g. "Mr. Foster" ↔ "Henry Foster".
-
-    Deliberately conservative: a *bare* surname with no title ("Foster", or
-    "Kirk" vs "George Kirk") is left alone, since it can't be distinguished from
-    a same-surname relative without semantic context — that is the job of the
-    planned LLM reconciliation pass.
+    "Mr. Foster" -> ["foster"], "Henry Foster" -> ["henry", "foster"],
+    "Captain Kirk" -> ["kirk"]. The last token is treated as the surname.
     """
-    pa, ha = _name_parts(a)
-    pb, hb = _name_parts(b)
-    if not pa or not pb or pa[-1] != pb[-1]:
-        return False
-    a_is_title_surname = ha and len(pa) == 1
-    b_is_title_surname = hb and len(pb) == 1
-    return (a_is_title_surname and len(pb) >= 2) or (b_is_title_surname and len(pa) >= 2)
+    raw = re.findall(r"[^\W_]+", name.lower())
+    return [t for t in raw if t not in _HONORIFICS]
 
 
 def _cluster_and_merge(
@@ -669,9 +652,12 @@ def _cluster_and_merge(
     never variant-to-variant — avoids generic titles like "Admiral" wrongly
     bridging two distinct characters.
 
-    When ``person_names`` is set (the characters category), an additional pass
-    links a "title + surname" canonical (e.g. "Mr. Foster") to a "given name +
-    same surname" full name (e.g. "Henry Foster"). See _same_person.
+    When ``person_names`` is set (the characters category), a second pass attaches
+    a short form (a lone surname, with or without a title — "Foster", "Mr.
+    Foster") to a full name that shares that surname ("Henry Foster") — but only
+    when exactly ONE person in the graph has that surname. If two people share it
+    (e.g. "James Kirk" and "George Kirk"), the short form is ambiguous and left
+    alone for the LLM reconciliation pass.
     """
     n = len(entries)
     if n == 0:
@@ -700,16 +686,24 @@ def _cluster_and_merge(
             if canons[i] in surfaces[j] or canons[j] in surfaces[i]:
                 union(i, j)
 
-    # Personal-name pass: link "Mr. Foster" → "Henry Foster" (title+surname to
-    # a full name sharing that surname). Bare surnames are intentionally left
-    # unmerged; see _same_person.
+    # Personal-name pass: attach lone-surname forms ("Mr. Foster", "Foster") to
+    # the full name that shares the surname — only when that surname is unique.
     if person_names:
+        parts = [_name_parts(e["canonical"]) for e in entries]
+        # Distinct people (post step-1 clusters) that carry each surname as part
+        # of a *full* name (>= 2 tokens after honorific stripping).
+        surname_people: dict[str, set[int]] = defaultdict(set)
         for i in range(n):
-            for j in range(i + 1, n):
-                if find(i) != find(j) and _same_person(
-                    entries[i]["canonical"], entries[j]["canonical"]
-                ):
-                    union(i, j)
+            if len(parts[i]) >= 2:
+                surname_people[parts[i][-1]].add(find(i))
+        for i in range(n):
+            # A short form is a single token (the surname), e.g. "Foster" or,
+            # after stripping the title, "Mr. Foster".
+            if len(parts[i]) != 1:
+                continue
+            people = {r for r in surname_people.get(parts[i][0], set()) if r != find(i)}
+            if len(people) == 1:
+                union(i, next(iter(people)))
 
     groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for i in range(n):
