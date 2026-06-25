@@ -38,6 +38,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Calibre plugin build artifacts
+calibre-plugin/.build/
+calibre-plugin/vendor/
+
 # Project
 *.colophon.json
 *.repair-report.json
