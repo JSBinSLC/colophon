@@ -56,14 +56,15 @@ class ConfigWidget(QWidget):
         layout.addWidget(QLabel("Repair options:"))
 
         self.backup_original = QCheckBox(
-            "Keep a backup of the original EPUB in the book's colophon/ folder",
+            "Keep a backup of the original EPUB in the book's data/ folder "
+            "(original.epub.orig)",
             self,
         )
         self.backup_original.setChecked(bool(prefs["backup_original"]))
         layout.addWidget(self.backup_original)
 
         self.persist_graph = QCheckBox(
-            "Save the semantic knowledge graph (book_graph.json) for future repairs",
+            "Save the knowledge graph in data/book_graph.json for future repairs",
             self,
         )
         self.persist_graph.setChecked(bool(prefs["persist_graph"]))
