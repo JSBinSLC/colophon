@@ -5,7 +5,7 @@ from calibre.gui2.actions import InterfaceAction
 from calibre.gui2 import error_dialog, info_dialog
 from qt.core import QThread, pyqtSignal
 
-from calibre_plugins.colophon.worker import graph_dir_for_book, repair_epub_for_book
+from calibre_plugins.colophon.worker import repair_epub_for_book
 
 
 class RepairThread(QThread):
@@ -21,8 +21,7 @@ class RepairThread(QThread):
         try:
             results = []
             for book_id in self.book_ids:
-                graph_dir = graph_dir_for_book(self.db, book_id)
-                results.append((book_id, repair_epub_for_book(self.db, book_id, graph_dir)))
+                results.append((book_id, repair_epub_for_book(self.db, book_id)))
             self.finished_ok.emit({"results": results})
         except Exception as exc:  # noqa: BLE001 — surface to GUI
             self.failed.emit(str(exc))
