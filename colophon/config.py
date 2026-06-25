@@ -59,6 +59,8 @@ class LLMConfig(BaseModel):
 class HintsConfig(BaseModel):
     character_names: list[str] = Field(default_factory=list)
     place_names: list[str] = Field(default_factory=list)
+    # Grouped aliases: [["Raskolnikov", "Rodya", "Rodka"], ...] — HIGH confidence merges
+    character_alias_groups: list[list[str]] = Field(default_factory=list)
 
 
 class OutputConfig(BaseModel):

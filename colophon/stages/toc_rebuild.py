@@ -111,12 +111,23 @@ class TocRebuildStage(Stage):
         )
         _set_spine_toc(opf.root, actual_ncx_id)
 
+        pagebreaks = _audit_pagebreaks(opf)
+        if pagebreaks["broken"]:
+            report.add(RepairChange(
+                stage="Stage 5",
+                description=f"Pagebreak audit: {len(pagebreaks['broken'])} broken marker(s)",
+                confidence=Confidence.MEDIUM,
+                status=ChangeStatus.FLAGGED,
+            ))
+
         # EPUB 3: also write nav.xhtml.
         if opf.version == "3":
             nav_href = opf.nav_href or "nav.xhtml"
             nav_path = opf.opf_dir / nav_href
-            _write_nav(nav_path, opf.title, chapters)
+            _write_nav(nav_path, opf.title, chapters, pagebreaks.get("pages", []))
             messages.append(f"nav.xhtml: {len(chapters)} entries")
+            if pagebreaks.get("pages"):
+                messages.append(f"page-list: {len(pagebreaks['pages'])} page(s)")
             nav_id = opf.nav_id or "nav"
             _ensure_manifest_item(
                 opf.root, nav_id, nav_href,
@@ -339,8 +350,13 @@ def _write_ncx(path: Path, uid: str, title: str, chapters: list[_Chapter]) -> No
     path.write_text(content, encoding="utf-8")
 
 
-def _write_nav(path: Path, title: str, chapters: list[_Chapter]) -> None:
-    """Write a nav.xhtml with epub:type='toc' nav element."""
+def _write_nav(
+    path: Path,
+    title: str,
+    chapters: list[_Chapter],
+    pages: list[dict[str, str]] | None = None,
+) -> None:
+    """Write a nav.xhtml with epub:type='toc' and optional page-list nav."""
     nav_dir = path.parent
     items = "\n".join(
         (
@@ -350,6 +366,22 @@ def _write_nav(path: Path, title: str, chapters: list[_Chapter]) -> None:
         )
         for ch in chapters
     )
+    page_nav = ""
+    if pages:
+        page_items = "\n".join(
+            (
+                f'        <li><a href="{_html.escape(p["href"])}">'
+                f'{_html.escape(p["label"])}</a></li>'
+            )
+            for p in pages
+        )
+        page_nav = (
+            '    <nav epub:type="page-list" id="page-list" hidden="">\n'
+            '      <ol>\n'
+            f'{page_items}\n'
+            '      </ol>\n'
+            '    </nav>\n'
+        )
     content = (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<html xmlns="http://www.w3.org/1999/xhtml"\n'
@@ -365,10 +397,43 @@ def _write_nav(path: Path, title: str, chapters: list[_Chapter]) -> None:
         f'{items}\n'
         '      </ol>\n'
         '    </nav>\n'
+        f'{page_nav}'
         '  </body>\n'
         '</html>\n'
     )
     path.write_text(content, encoding="utf-8")
+
+
+def _audit_pagebreaks(opf: _OPFInfo) -> dict[str, list]:
+    """Collect page-list entries and flag broken pagebreak markers."""
+    EPUB_NS = "http://www.idpf.org/2007/ops"
+    pages: list[dict[str, str]] = []
+    broken: list[str] = []
+
+    for item in opf.spine_items:
+        if item.item_id == opf.nav_id:
+            continue
+        try:
+            soup = BeautifulSoup(item.abs_path.read_bytes(), "html5lib")
+        except OSError:
+            continue
+        rel = item.href
+        for span in soup.find_all(["span", "a", "p"]):
+            epub_type = span.get("epub:type") or span.get("{http://www.idpf.org/2007/ops}type")
+            if epub_type != "pagebreak":
+                continue
+            label = span.get("title") or span.get_text(strip=True) or "?"
+            if not label or label == "?":
+                broken.append(f"{rel}: unnamed pagebreak")
+            else:
+                pages.append({"href": f"{rel}#{span.get('id', '')}", "label": label})
+        # Visible page numbers leaked as body text
+        for para in soup.find_all("p"):
+            t = para.get_text(strip=True)
+            if t.isdigit() and len(t) <= 4 and not para.find_parent("nav"):
+                broken.append(f"{rel}: visible page number '{t}'")
+
+    return {"pages": pages, "broken": broken}
 
 
 # ---------------------------------------------------------------------------

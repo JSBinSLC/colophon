@@ -23,6 +23,12 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 from colophon.report import ChangeStatus, Confidence, RepairChange
 from colophon.stages import Stage
+from colophon.stages.coherence import (
+    apply_tier_b_fused,
+    detect_header_footer_lines,
+    flag_italics_candidates,
+)
+from colophon.stages.collection import is_apparatus, register_for_href
 from colophon.stages.opf_utils import content_spine_items, read_opf
 
 log = logging.getLogger(__name__)
@@ -73,19 +79,37 @@ class TextCleanupStage(Stage):
 
         report = ctx["report"]
         book_graph: dict[str, Any] = ctx.get("book_graph") or {}
+        works: list[dict[str, Any]] = ctx.get("works") or []
         vocab = _build_vocabulary(book_graph)
+        entities = _entity_names(book_graph)
         replacements = _build_replacement_map(book_graph)
         ocr_map = _build_ocr_confusable_map(book_graph)
-        register = _assess_register(book_graph)
+        chapter_titles = {ch.get("title", "") for ch in book_graph.get("chapters", [])}
+        spine_blobs = [
+            item.abs_path.read_text(encoding="utf-8", errors="replace")
+            for item in content_spine_items(opf)
+        ]
+        header_footer = detect_header_footer_lines(spine_blobs, chapter_titles)
+        punct_bias = "—" if spine_blobs.count("—") >= spine_blobs.count(";") else ";"
         file_changes = 0
         dinkus_count = 0
 
         for item in content_spine_items(opf):
+            if works and is_apparatus(works, item.href):
+                continue
+            register = (
+                register_for_href(works, item.href)
+                if works else _assess_register(book_graph)
+            )
             raw = item.abs_path.read_bytes()
             soup = BeautifulSoup(raw, "html5lib")
+            _remove_artifact_lines(soup, header_footer)
             text_changed, dinkus = _cleanup_document(
                 soup, vocab, replacements, ocr_map, register, item.href, report,
+                entities=entities, punct_bias=punct_bias,
             )
+            for flag in flag_italics_candidates(soup, item.href):
+                report.add(flag)
             if text_changed or dinkus:
                 item.abs_path.write_text(_serialize(soup), encoding="utf-8")
                 file_changes += int(text_changed)
@@ -139,6 +163,23 @@ class TextCleanupStage(Stage):
                 confidence=Confidence.HIGH,
                 status=ChangeStatus.FLAGGED,
             ))
+
+
+def _entity_names(book_graph: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for category in ("characters", "places", "organizations", "invented_terms"):
+        for entity in book_graph.get("entities", {}).get(category, []):
+            names.add(entity.get("canonical", ""))
+            names.update(entity.get("variants", []))
+    names.discard("")
+    return names
+
+
+def _remove_artifact_lines(soup: BeautifulSoup, artifacts: set[str]) -> None:
+    for tag in list(soup.find_all(["p", "div", "span"])):
+        text = tag.get_text(" ", strip=True)
+        if text in artifacts:
+            tag.decompose()
 
 
 def _build_vocabulary(book_graph: dict[str, Any]) -> set[str]:
@@ -205,6 +246,8 @@ def _cleanup_document(
     location: str,
     report: Any,
     *,
+    entities: set[str] | None = None,
+    punct_bias: str = "—",
     dry_run: bool = False,
 ) -> tuple[bool, int]:
     text_changed = False
@@ -218,7 +261,10 @@ def _cleanup_document(
             continue
 
         original = str(node)
-        cleaned = _clean_text(original, vocab, replacements, ocr_map, register)
+        cleaned = _clean_text(
+            original, vocab, replacements, ocr_map, register,
+            entities=entities or set(), punct_bias=punct_bias, report=report,
+        )
         if cleaned != original:
             if not dry_run:
                 node.replace_with(cleaned)
@@ -246,6 +292,10 @@ def _clean_text(
     replacements: list[tuple[str, str]],
     ocr_map: dict[str, str],
     register: str,
+    *,
+    entities: set[str] | None = None,
+    punct_bias: str = "—",
+    report: Any = None,
 ) -> str:
     text = _normalize_unicode(text)
     text = _HYPHEN_BREAK.sub(lambda m: m.group(1) + m.group(2) if _is_known_word(
@@ -258,6 +308,10 @@ def _clean_text(
     if register == "conventional":
         text = _apply_proper_noun_map(text, replacements, vocab)
         text = _apply_tier_a_coherence(text, vocab, ocr_map)
+        text, tier_b = apply_tier_b_fused(text, vocab, entities or set(), punct_bias)
+        if report:
+            for change in tier_b:
+                report.add(change)
 
     return text
 

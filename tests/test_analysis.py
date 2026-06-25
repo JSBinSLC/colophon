@@ -475,6 +475,12 @@ def test_resolve_graph_path_explicit(tmp_path):
 # AnalysisStage — full run with mocked LLM
 # ---------------------------------------------------------------------------
 
+def _llm_cfg(**kwargs) -> PipelineConfig:
+    cfg = PipelineConfig(**kwargs)
+    cfg.llm.api_key = "test-key"
+    return cfg
+
+
 MOCK_RESPONSE = {
     "characters": [{"canonical": "Kirk", "variants": ["James Kirk"], "occurrences": 12}],
     "places": [{"canonical": "Enterprise", "variants": [], "occurrences": 8}],
@@ -490,7 +496,7 @@ def test_analysis_stage_writes_graph(tmp_path):
     work_dir.mkdir()
     _extract_epub(epub, work_dir)
 
-    cfg = PipelineConfig()
+    cfg = _llm_cfg()
 
     with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
         MockAdapter.return_value.complete_json.return_value = MOCK_RESPONSE
@@ -542,7 +548,7 @@ def test_analysis_stage_rebuilds_when_model_differs(tmp_path):
     graph_path = epub.with_suffix(".colophon.json")
     graph_path.write_text(json.dumps(cached), encoding="utf-8")
 
-    cfg = PipelineConfig()  # default model differs from the stored "some-other/model"
+    cfg = _llm_cfg()  # default model differs from the stored "some-other/model"
 
     with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
         MockAdapter.return_value.complete_json.return_value = MOCK_RESPONSE
@@ -563,7 +569,7 @@ def test_analysis_stage_rebuild_graph_ignores_cache(tmp_path):
     graph_path = epub.with_suffix(".colophon.json")
     graph_path.write_text(json.dumps(cached), encoding="utf-8")
 
-    cfg = PipelineConfig(rebuild_graph=True)
+    cfg = _llm_cfg(rebuild_graph=True)
 
     with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
         MockAdapter.return_value.complete_json.return_value = MOCK_RESPONSE
@@ -579,7 +585,7 @@ def test_analysis_stage_no_persist(tmp_path):
     work_dir.mkdir()
     _extract_epub(epub, work_dir)
 
-    cfg = PipelineConfig()
+    cfg = _llm_cfg()
     cfg.output.persist_graph = False
 
     with patch("colophon.stages.analysis.LLMAdapter") as MockAdapter:
@@ -692,7 +698,7 @@ def _mock_openai_client(completed_status: str = "completed") -> MagicMock:
 
 def test_batch_mode_submits_and_parses(tmp_path):
     """Batch path: successful completion → partial graphs returned."""
-    cfg = PipelineConfig()
+    cfg = _llm_cfg()
     cfg.llm.model = "openai/gpt-5.4-mini"
     cfg.llm.use_batch = True
     cfg.llm.batch_poll_interval = 0   # no sleeping in tests
@@ -718,7 +724,7 @@ def test_batch_mode_submits_and_parses(tmp_path):
 
 def test_batch_mode_jsonl_content(tmp_path):
     """The uploaded JSONL must contain one valid request per chunk."""
-    cfg = PipelineConfig()
+    cfg = _llm_cfg()
     cfg.llm.model = "openai/gpt-5.4-nano"
     cfg.llm.use_batch = True
     cfg.llm.batch_poll_interval = 0
@@ -784,7 +790,7 @@ def test_batch_mode_ignored_for_non_openai(tmp_path):
     work_dir.mkdir()
     _extract_epub(epub, work_dir)
 
-    cfg = PipelineConfig()
+    cfg = _llm_cfg()
     cfg.llm.model = "anthropic/claude-haiku-4-5"
     cfg.llm.use_batch = True   # should be ignored — model is anthropic/
 
