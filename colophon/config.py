@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from pydantic import BaseModel, Field
-
 
 _PROVIDER_ENV_KEY: dict[str, str] = {
-    "anthropic/":   "ANTHROPIC_API_KEY",
-    "openai/":      "OPENAI_API_KEY",
-    "openrouter/":  "OPENROUTER_API_KEY",
+    "anthropic/": "ANTHROPIC_API_KEY",
+    "openai/": "OPENAI_API_KEY",
+    "openrouter/": "OPENROUTER_API_KEY",
 }
 
 
-class LLMConfig(BaseModel):
+@dataclass
+class LLMConfig:
     model: str = "anthropic/claude-haiku-4-5"
-    api_key: str | None = None      # None = read from provider env var
-    api_base: str | None = None     # Custom endpoint, e.g. http://100.x.x.x:11434
-    num_ctx: int | None = None      # Ollama context window override (tokens)
+    api_key: str | None = None  # None = read from provider env var
+    api_base: str | None = None  # Custom endpoint, e.g. http://100.x.x.x:11434
+    num_ctx: int | None = None  # Ollama context window override (tokens)
     timeout: int = 600
     # Extraction is a deterministic task — default to greedy decoding so the
     # graph is reproducible run-to-run and the cache stays meaningful.
@@ -38,8 +38,8 @@ class LLMConfig(BaseModel):
     # OpenAI Batch API — 50% cheaper, async (up to 24h turnaround).
     # Only active for openai/* models; ignored by other providers.
     use_batch: bool = False
-    batch_poll_interval: int = 30   # Seconds between status checks
-    batch_timeout: int = 86400      # Give up after this many seconds (default 24h)
+    batch_poll_interval: int = 30  # Seconds between status checks
+    batch_timeout: int = 86400  # Give up after this many seconds (default 24h)
 
     def resolved_api_key(self) -> str | None:
         """Return the API key for the configured provider.
@@ -56,26 +56,29 @@ class LLMConfig(BaseModel):
         return None
 
 
-class HintsConfig(BaseModel):
-    character_names: list[str] = Field(default_factory=list)
-    place_names: list[str] = Field(default_factory=list)
+@dataclass
+class HintsConfig:
+    character_names: list[str] = field(default_factory=list)
+    place_names: list[str] = field(default_factory=list)
     # Grouped aliases: [["Raskolnikov", "Rodya", "Rodka"], ...] — HIGH confidence merges
-    character_alias_groups: list[list[str]] = Field(default_factory=list)
+    character_alias_groups: list[list[str]] = field(default_factory=list)
 
 
-class OutputConfig(BaseModel):
+@dataclass
+class OutputConfig:
     persist_graph: bool = True
     graph_output_path: Path | None = None  # None = sibling to EPUB
 
 
-class PipelineConfig(BaseModel):
-    llm: LLMConfig = Field(default_factory=LLMConfig)
-    hints: HintsConfig = Field(default_factory=HintsConfig)
-    output: OutputConfig = Field(default_factory=OutputConfig)
+@dataclass
+class PipelineConfig:
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    hints: HintsConfig = field(default_factory=HintsConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
     dry_run: bool = False
     interactive: bool = False
     rebuild_graph: bool = False
 
     @classmethod
-    def default(cls) -> "PipelineConfig":
+    def default(cls) -> PipelineConfig:
         return cls()
