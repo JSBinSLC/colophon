@@ -3,10 +3,11 @@ from calibre.customize import InterfaceActionBase
 
 
 class ColophonPlugin(InterfaceActionBase):
-    name = "Colophon EPUB Repair"
+    name = "Colophon"
     description = (
-        "Repair EPUB structure, navigation, OCR artifacts, and proper nouns "
-        "using the Colophon pipeline. Cloud AI (optional) improves name detection."
+        "Repair and proofread EPUB structure, navigation, OCR artifacts, and "
+        "proper nouns using the Colophon pipeline. Cloud AI (optional) improves "
+        "name detection and builds a reusable knowledge graph per book."
     )
     supported_platforms = ["windows", "osx", "linux"]
     author = "JSBinSLC"

@@ -1,4 +1,4 @@
-"""Calibre toolbar action — Repair with Colophon."""
+"""Calibre toolbar action — Repair and Proofread with Colophon."""
 from __future__ import annotations
 
 from calibre.gui2.actions import InterfaceAction
@@ -29,12 +29,12 @@ class RepairThread(QThread):
 
 
 class ColophonAction(InterfaceAction):
-    name = "Colophon EPUB Repair"
+    name = "Colophon"
 
     action_spec = (
-        "Repair with Colophon",
+        "Repair and Proofread with Colophon",
         None,
-        "Run the Colophon EPUB repair pipeline on selected book(s)",
+        "Repair and proofread EPUB structure, navigation, and OCR artifacts",
         None,
     )
 
@@ -53,10 +53,13 @@ class ColophonAction(InterfaceAction):
         book_ids = [self.gui.library_view.model().id(r) for r in rows]
         db = self.gui.current_db
 
-        non_epub = [
-            bid for bid in book_ids
-            if "EPUB" not in {f.upper() for f in db.formats(bid)}
-        ]
+        def _has_epub(bid: int) -> bool:
+            fmts = db.formats(bid, index_is_id=True)
+            if isinstance(fmts, str):
+                fmts = [fmts]
+            return "EPUB" in {f.upper() for f in fmts}
+
+        non_epub = [bid for bid in book_ids if not _has_epub(bid)]
         if non_epub:
             error_dialog(
                 self.gui,
@@ -73,7 +76,8 @@ class ColophonAction(InterfaceAction):
         info_dialog(
             self.gui,
             "Colophon",
-            f"Repairing {len(book_ids)} book(s)… This may take a few minutes.",
+            f"Repairing and proofreading {len(book_ids)} book(s)… "
+            "This may take a few minutes.",
             show=True,
         )
 
