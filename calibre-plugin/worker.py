@@ -15,7 +15,7 @@ def repair_epub_for_book(db, book_id: int, graph_dir: Path | None = None) -> dic
     from colophon import pipeline
 
     fmt = "EPUB"
-    fmts = db.formats(book_id)
+    fmts = db.formats(book_id, index_is_id=True)
     if not fmt.lower() in (f.lower() for f in fmts):
         raise ValueError("Selected book has no EPUB format")
 
@@ -28,7 +28,7 @@ def repair_epub_for_book(db, book_id: int, graph_dir: Path | None = None) -> dic
         tmp_path = Path(tmp)
         src = tmp_path / "source.epub"
         with open(src, "wb") as f:
-            db.format(book_id, fmt, f)
+            db.format(book_id, fmt, f, index_is_id=True)
 
         report = pipeline.run(src, config, quiet=True)
 
@@ -44,7 +44,7 @@ def repair_epub_for_book(db, book_id: int, graph_dir: Path | None = None) -> dic
             raise RuntimeError("Colophon did not produce a repaired EPUB")
 
         with open(repaired, "rb") as f:
-            db.add_format(book_id, fmt, f, run_hooks=False)
+            db.add_format(book_id, fmt, f, run_hooks=False, index_is_id=True)
 
         report_path = graph_dir / "repair-report.json" if graph_dir else repaired.with_suffix(".repair-report.json")
         if graph_dir:
@@ -65,7 +65,7 @@ def repair_epub_for_book(db, book_id: int, graph_dir: Path | None = None) -> dic
 
 def graph_dir_for_book(db, book_id: int) -> Path:
     """Return ``book_data/colophon/`` for persisting the semantic graph."""
-    path = db.abspath(book_id)
+    path = db.abspath(book_id, index_is_id=True)
     if not path:
         raise ValueError("Could not resolve book path in library")
     return Path(path) / "colophon"
