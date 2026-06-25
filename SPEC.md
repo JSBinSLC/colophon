@@ -95,6 +95,8 @@ Input EPUB
     • Hard hyphen resolution — dictionary-backed AND graph-backed (proper nouns)
     • Hard carriage return removal in mid-sentence line breaks
     • OCR noise removal (caret artifacts, stray characters)
+    • Local coherence repair — fused/split words, dropped punctuation, OCR confusables
+      (LLM proposes minimal fix, deterministic rules validate; see "Local Coherence Repair")
     • Proper noun consistency pass (apply canonical forms from graph)
     • Whitespace and paragraph normalization
     • Dinkus recovery — insert <hr epub:type="separator"/> at detected scene breaks
@@ -148,6 +150,47 @@ Every change Colophon makes carries a confidence level:
 The repair report is human-readable and actionable. A `--interactive` mode (v0.2) will pause at low-confidence decisions and prompt for user confirmation. A `--dry-run` flag previews all changes without applying them.
 
 Optionally, users can provide **hints via config** — e.g., `"character_names": ["T'Pring", "McCoy", "Spock"]` — to seed the graph with ground truth before analysis.
+
+---
+
+## Source Fidelity (the prime directive)
+
+Colophon repairs the book you have; it does not rewrite it toward some remembered "canonical" version. One invariant governs every AI-assisted change:
+
+> **The model's prior knowledge of a work may only rank or disambiguate candidates the source text already contains. It may never introduce, remove, or alter meaning-bearing content.**
+
+A model that happens to "know" *War and Peace* or *I, Robot* from training may use that knowledge to decide whether two extracted names are the same person, or to pick the correct spelling *among forms present in the text* — but it may not "correct" the user's translation to a different one, supply text that isn't there, or change a quote or fact to match its memory. Editions, translations, and abridgments diverge; the file is the ground truth, not the model's recollection. Every applied change must be justifiable by evidence **in the book** (the entity graph, a dictionary, the book's own punctuation/spelling distribution, surrounding context) and recorded in the repair report.
+
+---
+
+## Local Coherence Repair (Stage 3 sub-pass)
+
+The OCR/conversion defects that most break immersion are small and local: a reader (or a capable LLM) instantly sees "this doesn't make sense, but it should" even without external ground truth. The pass is framed around *that* question — **does this span read as valid prose, and if not, can the intended text be recovered from evidence?** — not around any single error type. Symptoms vary; the discipline is constant.
+
+**Representative symptoms (open-ended, not a closed list):**
+- *Fused words* — a dropped separator collapses two tokens (`Kel—terrified` → `Kelterrified`). Splits into a known entity/word + a known word.
+- *Split words* — a spurious separator breaks one word (`to gether` → `together`).
+- *Dropped/mangled punctuation* — em dashes eaten during conversion, quotes turned to `�`.
+- *OCR confusables* — `K1rk` → `Kirk`, `rn`↔`m`, `l`↔`1`, `cl`↔`d`.
+- *Ligature/diacritic damage*, *mid-word line-break hyphens*, *missing spaces after punctuation*, *encoding mojibake* (`â€™`).
+
+**Architecture — the LLM proposes, deterministic rules dispose.** This is the guard against an LLM "running amok" (a risk OCR text never carried — dumb tools mangle, they don't confabulate):
+1. **Deterministic candidate-finding** flags suspicious spans (non-dictionary/non-entity tokens, mojibake patterns, spacing anomalies). The whole book is never freely handed to the model to rewrite.
+2. **LLM adjudication** proposes the *minimal* intended text for a flagged span, under strict instruction: smallest possible edit, no meaning change, return the span unchanged if unsure.
+3. **Deterministic validation** gates the proposal: the edit must be small and local (bounded edit distance), must resolve to known-good tokens (dictionary or entity graph), and must not introduce or alter words. A proposal that fails validation becomes a *flag*, not an edit.
+
+**Confidence tiers (map to the existing confidence model):**
+- **Tier A — mechanical, ground truth available → auto-apply.** Unique resolution from dictionary or entity graph (`to gether`→`together`, `K1rk`→`Kirk`).
+- **Tier B — recoverable, but a judgment call → apply best, flag.** The split/join is certain; a secondary choice (which separator) is *inferred from the book's own evidence* and flagged (and offered under `--interactive`). The `Kelterrified` → `Kel—terrified` case lives here.
+- **Tier C — known-wrong but unrecoverable → flag only, never fabricate.** Genuinely missing or ambiguous text. Tell the reader; do not guess.
+
+**Hard guardrails:**
+- Never alter invented terms or in-world coinages — the `invented_terms` graph protects deliberate spellings from being "corrected."
+- Never touch text that is already valid (a transcription misreading is not a file defect).
+- Bounded, local edits only — split/join/single-char substitution/punctuation insertion, never a rewrite.
+- Every change cites its evidence and tier in the repair report.
+
+**Validation corpus:** `tests/fixtures/coherence-cases.jsonl` captures real and synthetic cases (anchored by the real `Kelterrified` defect from *The Lost Years*), each labeled with its tier, expected output (or `null` for flag-only), and the evidence that justifies the call. Future Stage 3 tests run against it.
 
 ---
 
@@ -329,7 +372,7 @@ colophon/
 | Milestone | Scope |
 |---|---|
 | **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, DRM gating ✅, TOC rebuild ✅, basic HTML repair |
-| **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, `--interactive` mode, confidence scores |
+| **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, local coherence repair (fused/split words, dropped punctuation, OCR confusables — LLM-proposes/deterministic-validates), `--interactive` mode, confidence scores |
 | **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1); **LLM reconciliation pass** for no-shared-substring aliases (Slavic naming), confidence-gated; Russian-novel stress fixtures + cluster purity/completeness scoring; proper noun consistency application (Stage 3); Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
 | **v0.5 — CSS, Fonts + EPUB 2→3 Upgrade** | CSS sanitization, IDPF/Adobe font obfuscation re-keying (so repaired EPUBs don't break embedded fonts), optional EPUB version upgrade path |
