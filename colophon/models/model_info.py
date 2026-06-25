@@ -15,8 +15,6 @@ import logging
 import urllib.request
 from dataclasses import dataclass
 
-import litellm
-
 log = logging.getLogger(__name__)
 
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -74,6 +72,8 @@ def probe_model(model: str, api_key: str | None = None) -> ModelInfo:
                 input_cost_per_token=_to_float(pricing.get("prompt")),
                 output_cost_per_token=_to_float(pricing.get("completion")),
             )
+        import litellm
+
         info = litellm.get_model_info(model)
         return ModelInfo(
             max_input_tokens=info.get("max_input_tokens"),

@@ -22,15 +22,17 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bs4 import BeautifulSoup
 from lxml import etree
 
 from colophon.config import PipelineConfig
-from colophon.models.llm_adapter import LLMAdapter
-from colophon.models.model_info import ModelInfo, probe_model
 from colophon.stages import Stage
+
+if TYPE_CHECKING:
+    from colophon.models.llm_adapter import LLMAdapter
+    from colophon.models.model_info import ModelInfo
 
 log = logging.getLogger(__name__)
 
@@ -113,11 +115,11 @@ class AnalysisStage(Stage):
             # Probe the model before sending anything: pick up the real max output
             # tokens (LiteLLM doesn't know them for OpenRouter models) and let
             # _build_graph preview chunk count and cost.
-            info = probe_model(config.llm.model, api_key)
+            info = _probe_model()(config.llm.model, api_key)
             if info.max_output_tokens and not config.llm.max_output_tokens:
                 config.llm.max_output_tokens = info.max_output_tokens
 
-            adapter = LLMAdapter(config.llm)
+            adapter = _llm_adapter_cls()(config.llm)
             graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
 
         if config.output.persist_graph:
@@ -1010,6 +1012,40 @@ def _cluster_and_merge(
         merged.append(record)
 
     return sorted(merged, key=lambda e: -e["occurrences"])
+
+
+def _llm_adapter_cls():
+    """Return LLMAdapter, respecting test patches on this module."""
+    import sys
+
+    mod = sys.modules[__name__]
+    if "LLMAdapter" in mod.__dict__:
+        return mod.__dict__["LLMAdapter"]
+    from colophon.models.llm_adapter import LLMAdapter
+
+    mod.__dict__["LLMAdapter"] = LLMAdapter
+    return LLMAdapter
+
+
+def _probe_model():
+    """Return probe_model, respecting test patches on this module."""
+    import sys
+
+    mod = sys.modules[__name__]
+    if "probe_model" in mod.__dict__:
+        return mod.__dict__["probe_model"]
+    from colophon.models.model_info import probe_model
+
+    mod.__dict__["probe_model"] = probe_model
+    return probe_model
+
+
+def __getattr__(name: str):
+    if name == "LLMAdapter":
+        return _llm_adapter_cls()
+    if name == "probe_model":
+        return _probe_model()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _merge_gender(group: list[dict[str, Any]]) -> str:

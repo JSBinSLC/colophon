@@ -19,11 +19,30 @@ import json
 import logging
 from typing import Any
 
-import litellm
-
 from colophon.config import LLMConfig
 
 log = logging.getLogger(__name__)
+
+
+class _LazyModule:
+    """Defer ``import litellm`` until first use (Calibre plugin hosts)."""
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._mod = None
+
+    def _load(self):
+        if self._mod is None:
+            import importlib
+
+            self._mod = importlib.import_module(self._name)
+        return self._mod
+
+    def __getattr__(self, item: str):
+        return getattr(self._load(), item)
+
+
+litellm = _LazyModule("litellm")
 
 
 def _recover_truncated_json(text: str) -> Any | None:
