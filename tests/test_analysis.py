@@ -20,6 +20,7 @@ from colophon.stages.analysis import (
     _build_graph_batch,
     _chunk_spine,
     _extract_spine_texts,
+    _is_pollution,
     _merge_into,
     _resolve_graph_path,
     _sha256,
@@ -271,6 +272,81 @@ def test_merge_title_surname_only_applies_to_characters():
     _merge_into(graph, partials)
     names = {p["canonical"] for p in graph["entities"]["places"]}
     assert names == {"Dr. York", "New York"}
+
+
+def test_merge_blocks_cross_gender_attach():
+    """"Mrs. Weston" must not merge into the male "George Weston" — they are
+    two different people who share a surname."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Mrs. Weston", "variants": ["Grace"], "gender": "female",
+             "occurrences": 28},
+            {"canonical": "George Weston", "variants": [], "gender": "male",
+             "occurrences": 12},
+        ),
+    ]
+    _merge_into(graph, partials)
+    names = {c["canonical"] for c in graph["entities"]["characters"]}
+    assert names == {"Mrs. Weston", "George Weston"}
+
+
+def test_merge_attaches_when_gender_unknown():
+    """Sci-fi / invented names without a gender cue fall back to the
+    surname-uniqueness rule and still merge."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars(
+            {"canonical": "Vorn", "variants": [], "gender": "unknown", "occurrences": 5},
+            {"canonical": "Zyl Vorn", "variants": [], "gender": "unknown", "occurrences": 9},
+        ),
+    ]
+    _merge_into(graph, partials)
+    assert len(graph["entities"]["characters"]) == 1
+
+
+def test_merge_emits_gender_for_characters():
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars({"canonical": "Henry Foster", "variants": [], "gender": "male",
+                "occurrences": 4}),
+    ]
+    _merge_into(graph, partials)
+    assert graph["entities"]["characters"][0]["gender"] == "male"
+
+
+def test_pollution_filter_drops_pronouns_and_descriptions():
+    assert _is_pollution("he", "characters")
+    assert _is_pollution("She", "characters")
+    assert _is_pollution("the robot", "characters")
+    assert _is_pollution("a man", "characters")
+    assert _is_pollution("his father", "characters")
+    assert _is_pollution("robot", "characters")          # bare lowercase noun
+    # Real names and designations survive.
+    assert not _is_pollution("Henry Foster", "characters")
+    assert not _is_pollution("RB-34", "characters")
+    assert not _is_pollution("QT-1", "characters")
+    # Invented terms keep legitimately-lowercase names.
+    assert not _is_pollution("soma", "invented_terms")
+    assert _is_pollution("it", "invented_terms")         # pronouns dropped everywhere
+
+
+def test_merge_strips_polluted_variants():
+    """Pronouns and descriptions the LLM dumps into variants are removed."""
+    graph = empty_graph("abc", "test/model")
+    partials = [
+        _chars({
+            "canonical": "Susan Calvin",
+            "variants": ["Calvin", "Dr. Calvin", "she", "the lady", "psychologist"],
+            "gender": "female",
+            "occurrences": 200,
+        }),
+    ]
+    _merge_into(graph, partials)
+    variants = set(graph["entities"]["characters"][0]["variants"])
+    assert "Calvin" in variants
+    assert "Dr. Calvin" in variants
+    assert {"she", "the lady", "psychologist"} & variants == set()
 
 
 def test_merge_deduplicates_chapters():

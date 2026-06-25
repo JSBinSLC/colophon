@@ -281,7 +281,7 @@ def _detect_chapters(opf: _OPFInfo, book_graph: dict) -> list[_Chapter]:
             ))
 
     if not chapters:
-        log.info("Stage 5: no headings found — using generic chapter titles")
+        log.info("Stage 5: no headings found - using generic chapter titles")
         idx = 0
         for item in opf.spine_items:
             if item.item_id == opf.nav_id:

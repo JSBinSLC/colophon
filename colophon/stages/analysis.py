@@ -34,7 +34,7 @@ from colophon.stages import Stage
 
 log = logging.getLogger(__name__)
 
-GRAPH_SCHEMA_VERSION = "1"
+GRAPH_SCHEMA_VERSION = "2"  # v2: characters carry a gender field
 
 # Approximate characters per token (conservative for prose).
 CHARS_PER_TOKEN = 4
@@ -206,7 +206,7 @@ You are a literary analyst. Given a passage from a book, extract structured info
 Return exactly this structure:
 {
   "characters": [
-    {"canonical": "string", "variants": ["string"], "occurrences": number}
+    {"canonical": "string", "variants": ["string"], "gender": "male|female|nonbinary|unknown", "occurrences": number}
   ],
   "places": [
     {"canonical": "string", "variants": ["string"], "occurrences": number}
@@ -224,7 +224,13 @@ Return exactly this structure:
 
 Rules:
 - canonical: the most frequently used / most complete spelling
-- variants: ALL other observed spellings of the same entity (may be empty list)
+- variants: ONLY other actual names, spellings, or nicknames of the same entity (may be empty list)
+- gender (characters only): the character's gender inferred from the text — "male", "female", or "nonbinary". Use "unknown" when the text gives no clear cue (e.g. an ungendered robot/AI, or an invented name with no gendered pronouns or honorifics). Do not guess.
+- DO NOT put any of the following in variants:
+    - pronouns (he, she, it, they, him, her, his, etc.)
+    - generic role or category nouns (the doctor, the robot, a man, the psychologist)
+    - descriptive phrases ("the young technician", "the thing that had been Herbie")
+  A variant must be a name someone or something is actually called, not a way of referring to it.
 - occurrences: approximate count across the passage
 - invented_terms: bespoke proper nouns that are not characters, places, or orgs (ships, spells, alien species, made-up words)
 - chapters: infer chapter breaks from headings like "Chapter 1", "PART TWO", roman numerals, or ALL-CAPS titles
@@ -600,8 +606,42 @@ def _coerce_count(value: Any) -> int:
         return 0
 
 
+# Pronouns and determiners that the LLM sometimes emits as "variants" but which
+# are references, not names. Dropped from every category.
+_PRONOUNS = frozenset({
+    "i", "me", "my", "mine", "myself", "we", "us", "our", "ours",
+    "you", "your", "yours", "he", "him", "his", "himself", "she", "her",
+    "hers", "herself", "it", "its", "itself", "they", "them", "their",
+    "theirs", "this", "that", "these", "those", "who", "whom", "whose",
+})
+# Leading words that mark a definite/possessive description rather than a name.
+_DESCRIPTOR_LEADERS = ("the ", "a ", "an ", "his ", "her ", "its ", "their ",
+                       "my ", "your ", "this ", "that ", "these ", "those ")
+
+
+def _is_pollution(variant: str, category: str) -> bool:
+    """True if a 'variant' is really a pronoun, descriptor, or generic noun.
+
+    Applied to all categories for pronouns/descriptors. For everything except
+    invented_terms (whose names are legitimately lowercase, e.g. "soma"), a bare
+    lowercase word is also treated as a generic noun ("robot", "the lady").
+    """
+    low = variant.lower()
+    if low in _PRONOUNS:
+        return True
+    if low.startswith(_DESCRIPTOR_LEADERS):
+        return True
+    if category != "invented_terms" and variant.islower() and " " not in variant:
+        return True
+    return False
+
+
 def _collect_entries(partials: list[dict[str, Any]], category: str) -> list[dict[str, Any]]:
-    """Flatten one entity category across all partial responses."""
+    """Flatten one entity category across all partial responses.
+
+    Pronouns, definite descriptions, and generic nouns are filtered out of the
+    variant lists (see _is_pollution); characters additionally carry a gender.
+    """
     entries: list[dict[str, Any]] = []
     for partial in partials:
         for entity in partial.get(category, []):
@@ -609,15 +649,25 @@ def _collect_entries(partials: list[dict[str, Any]], category: str) -> list[dict
             if not canonical:
                 continue
             variants = {
-                v.strip() for v in entity.get("variants", []) if v and v.strip()
+                v.strip() for v in entity.get("variants", [])
+                if v and v.strip() and not _is_pollution(v.strip(), category)
             }
             variants.discard(canonical)
-            entries.append({
+            entry = {
                 "canonical": canonical,
                 "variants": variants,
                 "occurrences": _coerce_count(entity.get("occurrences")),
-            })
+            }
+            if category == "characters":
+                entry["gender"] = _normalize_gender(entity.get("gender"))
+            entries.append(entry)
     return entries
+
+
+def _normalize_gender(value: Any) -> str:
+    """Coerce an LLM gender value to male/female/nonbinary/unknown."""
+    g = str(value or "").strip().lower()
+    return g if g in ("male", "female", "nonbinary") else "unknown"
 
 
 # Honorific titles and ranks stripped when matching personal names, so that
@@ -642,6 +692,29 @@ def _name_parts(name: str) -> list[str]:
     return [t for t in raw if t not in _HONORIFICS]
 
 
+_MALE_HONORIFICS = frozenset({
+    "mr", "sir", "lord", "master", "king", "prince", "duke", "count",
+    "baron", "father", "brother", "uncle", "monsieur",
+})
+_FEMALE_HONORIFICS = frozenset({
+    "mrs", "ms", "miss", "madam", "madame", "mlle", "mme", "lady", "queen",
+    "princess", "duchess", "countess", "baroness", "mother", "sister", "aunt",
+})
+
+
+def _entry_gender(canonical: str, llm_gender: str) -> str:
+    """Gender for a character entry: the LLM's call if known, else inferred from
+    a gendered honorific ("Mrs. Weston" -> female), else "unknown"."""
+    if llm_gender in ("male", "female", "nonbinary"):
+        return llm_gender
+    for token in re.findall(r"[^\W_]+", canonical.lower()):
+        if token in _MALE_HONORIFICS:
+            return "male"
+        if token in _FEMALE_HONORIFICS:
+            return "female"
+    return "unknown"
+
+
 def _cluster_and_merge(
     entries: list[dict[str, Any]], person_names: bool = False
 ) -> list[dict[str, Any]]:
@@ -655,9 +728,11 @@ def _cluster_and_merge(
     When ``person_names`` is set (the characters category), a second pass attaches
     a short form (a lone surname, with or without a title — "Foster", "Mr.
     Foster") to a full name that shares that surname ("Henry Foster") — but only
-    when exactly ONE person in the graph has that surname. If two people share it
-    (e.g. "James Kirk" and "George Kirk"), the short form is ambiguous and left
-    alone for the LLM reconciliation pass.
+    when exactly ONE person in the graph has that surname AND their genders don't
+    conflict. The gender guard stops "Mrs. Weston" from merging into the male
+    "George Weston"; if two people share a surname (e.g. "James Kirk" and "George
+    Kirk"), or genders are merely unknown (invented/sci-fi names), it falls back
+    to leaving ambiguous forms for the LLM reconciliation pass.
     """
     n = len(entries)
     if n == 0:
@@ -687,23 +762,36 @@ def _cluster_and_merge(
                 union(i, j)
 
     # Personal-name pass: attach lone-surname forms ("Mr. Foster", "Foster") to
-    # the full name that shares the surname — only when that surname is unique.
+    # the full name that shares the surname — only when that surname is unique
+    # and the genders don't conflict.
     if person_names:
         parts = [_name_parts(e["canonical"]) for e in entries]
+        genders = [_entry_gender(e["canonical"], e.get("gender", "unknown")) for e in entries]
         # Distinct people (post step-1 clusters) that carry each surname as part
-        # of a *full* name (>= 2 tokens after honorific stripping).
+        # of a *full* name (>= 2 tokens after honorific stripping), plus the
+        # gender of each such full-name person.
         surname_people: dict[str, set[int]] = defaultdict(set)
+        root_gender: dict[int, str] = {}
         for i in range(n):
             if len(parts[i]) >= 2:
                 surname_people[parts[i][-1]].add(find(i))
+                if genders[i] != "unknown":
+                    root_gender[find(i)] = genders[i]
         for i in range(n):
             # A short form is a single token (the surname), e.g. "Foster" or,
             # after stripping the title, "Mr. Foster".
             if len(parts[i]) != 1:
                 continue
             people = {r for r in surname_people.get(parts[i][0], set()) if r != find(i)}
-            if len(people) == 1:
-                union(i, next(iter(people)))
+            if len(people) != 1:
+                continue
+            root = next(iter(people))
+            rg = root_gender.get(root, "unknown")
+            # Block a cross-gender attach (e.g. "Mrs. Weston" -> male "George
+            # Weston"); allow when either side's gender is unknown.
+            if genders[i] != "unknown" and rg != "unknown" and genders[i] != rg:
+                continue
+            union(i, root)
 
     groups: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for i in range(n):
@@ -726,10 +814,26 @@ def _cluster_and_merge(
             occurrences += e["occurrences"]
         all_surface.discard(canonical)
 
-        merged.append({
+        record: dict[str, Any] = {
             "canonical": canonical,
             "variants": sorted(all_surface),
             "occurrences": occurrences,
-        })
+        }
+        if person_names:
+            record["gender"] = _merge_gender(group)
+        merged.append(record)
 
     return sorted(merged, key=lambda e: -e["occurrences"])
+
+
+def _merge_gender(group: list[dict[str, Any]]) -> str:
+    """Resolve a cluster's gender from its members.
+
+    Uses each member's stated or honorific-implied gender; returns the single
+    known value, or "unknown" if members disagree or none is known.
+    """
+    known = {
+        g for e in group
+        if (g := _entry_gender(e["canonical"], e.get("gender", "unknown"))) != "unknown"
+    }
+    return known.pop() if len(known) == 1 else "unknown"

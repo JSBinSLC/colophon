@@ -159,7 +159,7 @@ class LLMAdapter:
         if recovered is not None:
             log.warning(
                 "LLM response truncated at %d chars (hit output token limit); "
-                "recovered partial JSON — tail entities for this chunk were lost. "
+                "recovered partial JSON - tail entities for this chunk were lost. "
                 "Reduce --chunk-chars or raise max_output_tokens to capture them.",
                 len(text),
             )
