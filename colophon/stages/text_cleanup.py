@@ -228,8 +228,27 @@ def _build_vocabulary(book_graph: dict[str, Any]) -> set[str]:
     return words
 
 
+def _is_inflection(a: str, b: str) -> bool:
+    """True if a and b differ only by a regular plural/possessive suffix.
+
+    "Organisms"/"Organism" and "Relicts"/"Relict" are the SAME entity but NOT
+    interchangeable spellings — canonicalizing the plural to the singular
+    ("a pair of Organisms" -> "a pair of Organism") mangles grammar and meaning.
+    Such pairs are excluded from the replacement map.
+    """
+    a, b = a.lower(), b.lower()
+    if a == b:
+        return False  # case-only difference (e.g. "Mccoy"/"McCoy") — a real fix, keep it
+    short, long = sorted((a, b), key=len)
+    return any(long == short + suf for suf in ("s", "es", "'s", "’s"))
+
+
 def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
-    """Variant → canonical pairs, longest variants first."""
+    """Variant → canonical pairs, longest variants first.
+
+    Skips pairs that differ only by inflection (plurals/possessives): those are
+    grammatical forms, not misspellings, and must not be rewritten.
+    """
     pairs: list[tuple[str, str]] = []
     for category in ("characters", "places", "organizations", "invented_terms"):
         for entity in book_graph.get("entities", {}).get(category, []):
@@ -238,7 +257,7 @@ def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
                 continue
             for variant in entity.get("variants", []):
                 variant = variant.strip()
-                if variant and variant != canonical:
+                if variant and variant != canonical and not _is_inflection(variant, canonical):
                     pairs.append((variant, canonical))
     pairs.sort(key=lambda p: len(p[0]), reverse=True)
     return pairs
@@ -383,7 +402,9 @@ def _apply_proper_noun_map(
 ) -> str:
     for variant, canonical in replacements:
         if variant in text:
-            text = text.replace(variant, canonical)
+            # Word-boundary replace so a short variant ("Kel") can't corrupt a
+            # longer word ("Kelp"); plain str.replace matched substrings.
+            text = re.sub(rf"\b{re.escape(variant)}\b", canonical, text)
             for token in re.findall(r"[A-Za-z]+", canonical):
                 vocab.add(token.lower())
     return text

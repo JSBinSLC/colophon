@@ -162,6 +162,53 @@ def test_coherence_corpus_all_tiers():
     assert by_id["finnegans-wake-thunderword"]["pass"]
 
 
+def test_proper_noun_map_preserves_plurals():
+    """Plural inflections of an entity name are NOT spelling variants and must
+    not be singularized ("a pair of Organisms" must stay plural)."""
+    graph = {
+        "entities": {
+            "characters": [{"canonical": "McCoy", "variants": ["Mccoy"]}],
+            "places": [],
+            "organizations": [],
+            "invented_terms": [
+                {"canonical": "Organism", "variants": ["Organisms"]},
+                {"canonical": "Relict", "variants": ["Relicts"]},
+            ],
+        },
+        "chapters": [],
+    }
+    repl = _build_replacement_map(graph)
+    assert ("Organisms", "Organism") not in repl   # plural, not a misspelling
+    assert ("Relicts", "Relict") not in repl
+    assert ("Mccoy", "McCoy") in repl              # genuine spelling variant kept
+
+    out = _apply_proper_noun_map(
+        "a pair of Organisms played while the Relicts watched Mccoy.",
+        repl, _build_vocabulary(graph),
+    )
+    assert "a pair of Organisms played" in out     # the bug: must stay plural
+    assert "the Relicts watched" in out
+    assert "McCoy" in out                          # misspelling still canonicalized
+
+
+def test_proper_noun_map_respects_word_boundaries():
+    """A short variant must not be replaced inside a longer word."""
+    graph = {
+        "entities": {
+            "characters": [{"canonical": "Finn", "variants": ["Fin"]}],
+            "places": [], "organizations": [], "invented_terms": [],
+        },
+        "chapters": [],
+    }
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "Fin dove; the final fin was Finny.", repl, _build_vocabulary(graph),
+    )
+    assert out.startswith("Finn dove")             # standalone 'Fin' fixed
+    assert "the final fin" in out                  # not corrupted inside 'final'/lowercase
+    assert "Finny" in out                          # not corrupted inside 'Finny'
+
+
 def test_stage_analyze_dry_run(tmp_path):
     work = _setup_work(tmp_path)
     ctx = {
