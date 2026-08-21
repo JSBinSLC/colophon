@@ -195,7 +195,7 @@ def _remove_artifact_lines(
                     confidence=Confidence.MEDIUM,
                     status=ChangeStatus.APPLIED,
                     location=location,
-                    original=text[:120],
+                    original=text,
                 ))
 
 
@@ -376,8 +376,8 @@ def _cleanup_document(
                     confidence=Confidence.HIGH,
                     status=ChangeStatus.APPLIED,
                     location=location,
-                    original=original[:120],
-                    replacement=cleaned[:120],
+                    original=original,
+                    replacement=cleaned,
                 ))
 
     if register == "conventional":
@@ -448,15 +448,15 @@ def _join_false_paragraphs(
                 para.append(child.extract())
             nxt.decompose()
             if report is not None:
-                snippet = (left.rstrip()[-40:] + joiner + right.lstrip()[:40]).replace("\n", " ")
+                joined_text = (left.rstrip() + joiner + right.lstrip()).replace("\n", " ")
                 report.add(RepairChange(
                     stage="Stage 3",
                     description="Joined mid-sentence paragraph wrap",
                     confidence=Confidence.HIGH,
                     status=ChangeStatus.APPLIED,
                     location=location,
-                    original=(left[-60:] + " | " + right[:60]).replace("\n", " "),
-                    replacement=snippet,
+                    original=(left + " | " + right).replace("\n", " "),
+                    replacement=joined_text,
                 ))
             break
     return count

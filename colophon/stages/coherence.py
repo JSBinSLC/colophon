@@ -81,7 +81,7 @@ def flag_italics_candidates(soup: Any, location: str) -> list[RepairChange]:
                 confidence=Confidence.LOW,
                 status=ChangeStatus.FLAGGED,
                 location=location,
-                original=text[:120],
+                original=text,
             ))
     return flags
 

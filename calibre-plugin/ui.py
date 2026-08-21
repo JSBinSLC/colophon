@@ -1,11 +1,10 @@
 """Calibre toolbar action — Repair and Proofread with Colophon."""
 from __future__ import annotations
 
-from calibre.gui2.actions import InterfaceAction
 from calibre.gui2 import error_dialog, info_dialog
-from qt.core import QThread, pyqtSignal
-
+from calibre.gui2.actions import InterfaceAction
 from calibre_plugins.colophon.worker import repair_epub_for_book
+from qt.core import QMessageBox, QThread, QToolButton, pyqtSignal
 
 
 class RepairThread(QThread):
@@ -29,6 +28,12 @@ class RepairThread(QThread):
 
 class ColophonAction(InterfaceAction):
     name = "Colophon"
+    action_add_menu = True
+    popup_type = (
+        QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        if hasattr(QToolButton, "ToolButtonPopupMode")
+        else QToolButton.MenuButtonPopup
+    )
 
     action_spec = (
         "Colophon",
@@ -39,9 +44,24 @@ class ColophonAction(InterfaceAction):
 
     def genesis(self):
         # get_icons is injected by Calibre into plugin modules.
-        icon = get_icons("images/icon.png", "Colophon")  # type: ignore[name-defined]
+        icon = get_icons("images/icon.png", "Colophon")  # type: ignore[name-defined] # noqa: F821
         self.qaction.setIcon(icon)
         self.qaction.triggered.connect(self.repair_selected)
+
+        menu = self.qaction.menu()
+        if menu is None:
+            from qt.core import QMenu
+
+            menu = QMenu(self.gui)
+            self.qaction.setMenu(menu)
+
+        self.create_menu_action(
+            menu,
+            "colophon_review_last_report",
+            "Review last report",
+            icon=icon,
+            triggered=self.review_last_report,
+        )
 
     def apply_settings(self):
         pass
@@ -59,6 +79,8 @@ class ColophonAction(InterfaceAction):
             fmts = db.formats(bid, index_is_id=True)
             if isinstance(fmts, str):
                 fmts = [fmts]
+            elif not fmts:
+                fmts = []
             return "EPUB" in {f.upper() for f in fmts}
 
         non_epub = [bid for bid in book_ids if not _has_epub(bid)]
@@ -66,7 +88,8 @@ class ColophonAction(InterfaceAction):
             error_dialog(
                 self.gui,
                 "Colophon",
-                f"{len(non_epub)} selected book(s) have no EPUB format. Colophon repairs EPUB only.",
+                f"{len(non_epub)} selected book(s) have no EPUB format. "
+                "Colophon repairs EPUB only.",
                 show=True,
             )
             return
@@ -83,10 +106,52 @@ class ColophonAction(InterfaceAction):
             show=True,
         )
 
+    def review_last_report(self):
+        rows = self.gui.library_view.selectionModel().selectedRows()
+        if not rows:
+            error_dialog(self.gui, "Colophon", "Select a book first.", show=True)
+            return
+
+        book_id = self.gui.library_view.model().id(rows[0])
+        db = self.gui.current_db
+        api = db.new_api
+
+        fmts = db.formats(book_id, index_is_id=True)
+        if isinstance(fmts, str):
+            fmts = [fmts]
+        elif not fmts:
+            fmts = []
+        has_epub = "EPUB" in {f.upper() for f in fmts}
+
+        from calibre_plugins.colophon.book_data import REPORT_RELPATH, has_extra_file
+
+        if not has_epub or not has_extra_file(api, book_id, REPORT_RELPATH):
+            error_dialog(
+                self.gui,
+                "Colophon",
+                "No repair report for this book. Run Colophon first.",
+                show=True,
+            )
+            return
+
+        from calibre_plugins.colophon.review_dialog import ReviewDialog
+
+        dialog = ReviewDialog(self.gui, db, book_id, parent=self.gui)
+        dialog.exec()
+
     def _on_done(self, payload: dict):
         lines = []
+        first_reviewable_book_id = None
+        first_reviewable_title = None
+        reviewable_count = 0
+
+        from calibre_plugins.colophon.book_data import REPORT_RELPATH, has_extra_file
+
+        db = self.gui.current_db
+        api = db.new_api
+
         for book_id, result in payload["results"]:
-            title = self.gui.current_db.new_api.field_for("title", book_id) or f"id:{book_id}"
+            title = api.field_for("title", book_id) or f"id:{book_id}"
             if result.get("skipped"):
                 lines.append(f"{title}: skipped — {result['skipped']}")
             elif result.get("ok"):
@@ -94,6 +159,56 @@ class ColophonAction(InterfaceAction):
                 lines.append(
                     f"{title}: {s['applied']} applied, {s['flagged']} flagged"
                 )
+                if has_extra_file(api, book_id, REPORT_RELPATH):
+                    reviewable_count += 1
+                    if first_reviewable_book_id is None:
+                        first_reviewable_book_id = book_id
+                        first_reviewable_title = title
             else:
                 lines.append(f"{title}: failed")
-        info_dialog(self.gui, "Colophon — done", "\n".join(lines) or "Complete.", show=True)
+
+        summary_text = "\n".join(lines) or "Complete."
+
+        if first_reviewable_book_id is not None:
+            msg_box = QMessageBox(self.gui)
+            msg_box.setWindowTitle("Colophon — done")
+            icon_info = getattr(
+                getattr(QMessageBox, "Icon", QMessageBox),
+                "Information",
+                QMessageBox.Information,
+            )
+            msg_box.setIcon(icon_info)
+
+            if reviewable_count > 1:
+                msg_text = (
+                    f"{summary_text}\n\n"
+                    f"Click 'Review changes…' to open the review dialog for "
+                    f"'{first_reviewable_title}' (first of {reviewable_count} repaired books)."
+                )
+            else:
+                msg_text = summary_text
+
+            msg_box.setText(msg_text)
+            action_role = getattr(
+                getattr(QMessageBox, "ButtonRole", QMessageBox),
+                "ActionRole",
+                QMessageBox.ActionRole,
+            )
+            close_btn_type = getattr(
+                getattr(QMessageBox, "StandardButton", QMessageBox),
+                "Close",
+                QMessageBox.Close,
+            )
+            review_btn = msg_box.addButton("Review changes…", action_role)
+            msg_box.addButton(close_btn_type)
+            msg_box.setDefaultButton(review_btn)
+
+            msg_box.exec()
+
+            if msg_box.clickedButton() == review_btn:
+                from calibre_plugins.colophon.review_dialog import ReviewDialog
+
+                dialog = ReviewDialog(self.gui, db, first_reviewable_book_id, parent=self.gui)
+                dialog.exec()
+        else:
+            info_dialog(self.gui, "Colophon — done", summary_text, show=True)
