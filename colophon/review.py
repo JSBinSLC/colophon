@@ -5,8 +5,6 @@ import copy
 from dataclasses import dataclass
 from pathlib import Path
 
-from bs4 import BeautifulSoup, Tag
-
 _ITALICS_DESC = "Missing italics candidate (thought attribution)"
 
 
@@ -86,22 +84,13 @@ def _swap_unique(html: str, find: str, repl: str) -> str:
 
 
 def _wrap_italics(html: str, original: str) -> str:
-    soup = BeautifulSoup(html, "html.parser")
+    """Wrap a unique plaintext span in <em> without reserializing the file."""
     needle = original.strip()
-    hits: list[Tag] = []
-    for para in soup.find_all("p"):
-        text = para.get_text(" ", strip=True)
-        if not text:
-            continue
-        if text == needle or text.startswith(needle) or needle.startswith(text):
-            hits.append(para)
-    if len(hits) != 1:
+    if not needle:
+        raise ValueError("Italics candidate is empty")
+    if html.count(needle) != 1:
         raise ValueError("Italics candidate is not unique")
-    para = hits[0]
-    if para.find("em") or para.find("i"):
-        raise ValueError("Paragraph already has italics")
-    em = soup.new_tag("em")
-    for child in list(para.contents):
-        em.append(child.extract())
-    para.append(em)
-    return str(soup)
+    if "<" in needle or ">" in needle:
+        raise ValueError("Italics candidate contains markup")
+    start = html.find(needle)
+    return html[:start] + "<em>" + needle + "</em>" + html[start + len(needle) :]

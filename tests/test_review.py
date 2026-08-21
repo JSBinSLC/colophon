@@ -78,8 +78,30 @@ def test_apply_italics_wrap(tmp_path: Path):
     })
     apply_actions(work, report, [ReviewAction(0, "apply")])
     text = (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8")
+    assert "<em>Different as chalk and cheese, she thought.</em>" in text
+    assert text.startswith("<!DOCTYPE") or "<html>" in text
+    assert text.count("<p>") == 1
     assert "<em>" in text
-    assert "she thought." in text
+
+
+def test_apply_italics_does_not_reserialize_rest_of_file(tmp_path: Path):
+    html = (
+        '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml">'
+        "<body><p>Keep me</p><p>She thought this.</p></body></html>"
+    )
+    work = _work(tmp_path, html)
+    report = _report({
+        "status": "flagged",
+        "location": "ch1.xhtml",
+        "original": "She thought this.",
+        "replacement": None,
+        "description": "Missing italics candidate (thought attribution)",
+    })
+    apply_actions(work, report, [ReviewAction(0, "apply")])
+    text = (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8")
+    assert 'xmlns="http://www.w3.org/1999/xhtml"' in text
+    assert "<p>Keep me</p>" in text
+    assert "<p><em>She thought this.</em></p>" in text
 
 
 def test_refuse_non_unique_match(tmp_path: Path):
