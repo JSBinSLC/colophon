@@ -244,6 +244,20 @@ def _is_inflection(a: str, b: str) -> bool:
     return any(long == short + suf for suf in ("s", "es", "'s", "’s"))
 
 
+_TITLE_WORDS = frozenset({
+    "dr", "mr", "mrs", "ms", "prof", "rev", "capt", "lt", "col", "gen", "sgt",
+    "doctor", "mister", "miss", "madam", "sir", "lord", "lady",
+})
+
+
+def _is_all_caps_abbr(variant: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z]{2,4}", variant))
+
+
+def _is_title_abbr(variant: str) -> bool:
+    return variant.rstrip(".").lower() in _TITLE_WORDS
+
+
 def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
     """Variant → canonical pairs, longest variants first.
 
@@ -258,8 +272,19 @@ def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
                 continue
             for variant in entity.get("variants", []):
                 variant = variant.strip()
-                if variant and variant != canonical and not _is_inflection(variant, canonical):
-                    pairs.append((variant, canonical))
+                if not variant or variant == canonical or _is_inflection(variant, canonical):
+                    continue
+                if _is_all_caps_abbr(variant):
+                    continue
+                if _is_title_abbr(variant) and not _is_title_abbr(canonical):
+                    continue
+                if (
+                    category in ("places", "organizations")
+                    and len(variant.split()) >= 2
+                    and variant in canonical
+                ):
+                    continue
+                pairs.append((variant, canonical))
     pairs.sort(key=lambda p: len(p[0]), reverse=True)
     return pairs
 
@@ -476,18 +501,91 @@ def _normalize_unicode(text: str) -> str:
     return unicodedata.normalize("NFKC", text)
 
 
+def _title_token_at_end(text_before: str) -> str | None:
+    match = re.search(r"([A-Za-z.]+)\s*$", text_before)
+    if not match:
+        return None
+    token = match.group(1)
+    return token if _is_title_abbr(token) else None
+
+
+def _has_canonical_remainder(
+    text: str, start: int, end: int, variant: str, canonical: str
+) -> bool:
+    """True if remainder of canonical already precedes or follows the matched variant."""
+    if variant not in canonical:
+        return False
+    idx = canonical.find(variant)
+    if idx == -1:
+        return False
+    prefix_rem = canonical[:idx]
+    suffix_rem = canonical[idx + len(variant) :]
+    before, after = text[:start], text[end:]
+    if prefix_rem and before.lower().endswith(prefix_rem.lower()):
+        return True
+    # "Dr. Vespasian" already supplies the title in "Doctor Vespasian".
+    if (
+        prefix_rem.strip()
+        and _is_title_abbr(prefix_rem.strip())
+        and _title_token_at_end(before)
+    ):
+        return True
+    if suffix_rem and after.lower().startswith(suffix_rem.lower()):
+        return True
+    return False
+
+
 def _apply_proper_noun_map(
     text: str,
     replacements: list[tuple[str, str]],
     vocab: set[str],
 ) -> str:
+    protected_spans: list[tuple[int, int]] = []
+
     for variant, canonical in replacements:
-        if variant in text:
-            # Word-boundary replace so a short variant ("Kel") can't corrupt a
-            # longer word ("Kelp"); plain str.replace matched substrings.
-            text = re.sub(rf"\b{re.escape(variant)}\b", canonical, text)
+        if variant not in text:
+            continue
+
+        pattern_str = ""
+        if re.match(r"^\w", variant):
+            pattern_str += r"\b"
+        pattern_str += re.escape(variant)
+        if re.search(r"\w$", variant):
+            pattern_str += r"\b"
+        pattern = re.compile(pattern_str)
+
+        matches = list(pattern.finditer(text))
+        if not matches:
+            continue
+
+        applied = False
+        for m in reversed(matches):
+            m_start, m_end = m.span()
+            if any(
+                not (m_end <= p_start or m_start >= p_end)
+                for p_start, p_end in protected_spans
+            ):
+                continue
+            if _has_canonical_remainder(text, m_start, m_end, variant, canonical):
+                continue
+
+            text = text[:m_start] + canonical + text[m_end:]
+            applied = True
+            delta = len(canonical) - (m_end - m_start)
+
+            new_protected: list[tuple[int, int]] = []
+            for p_start, p_end in protected_spans:
+                if p_start >= m_end:
+                    new_protected.append((p_start + delta, p_end + delta))
+                else:
+                    new_protected.append((p_start, p_end))
+            new_protected.append((m_start, m_start + len(canonical)))
+            protected_spans = new_protected
+
+        if applied:
             for token in re.findall(r"[A-Za-z]+", canonical):
                 vocab.add(token.lower())
+
     return text
 
 

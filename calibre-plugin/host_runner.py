@@ -79,6 +79,7 @@ def probe_host_python() -> str | None:
                 check=True,
                 capture_output=True,
                 timeout=20,
+                **_subprocess_kwargs(),
             )
             return exe
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
@@ -89,11 +90,21 @@ def probe_host_python() -> str | None:
 def can_load_ai_deps_in_calibre() -> bool:
     """True when vendored pydantic_core loads inside Calibre's interpreter."""
     try:
-        import pydantic_core._pydantic_core  # noqa: F401
         import litellm  # noqa: F401
+        import pydantic_core._pydantic_core  # noqa: F401
     except Exception:
         return False
     return True
+
+
+_CREATE_NO_WINDOW = 0x08000000
+
+
+def _subprocess_kwargs(is_windows: bool | None = None) -> dict:
+    """Extra subprocess.run kwargs to keep Windows from flashing a console."""
+    if is_windows is None:
+        is_windows = os.name == "nt"
+    return {"creationflags": _CREATE_NO_WINDOW} if is_windows else {}
 
 
 def run_pipeline_host(epub_path: Path, config, report_path: Path) -> None:
@@ -143,20 +154,52 @@ if cfg.output.graph_output_path:
 report = pipeline.run(Path({str(epub_path)!r}), cfg, quiet=True)
 report.write(Path({str(report_path)!r}))
 """
-    subprocess.run([py, "-c", script], check=True, env=env)
+    subprocess.run(
+        [py, "-c", script],
+        check=True,
+        env=env,
+        capture_output=True,
+        **_subprocess_kwargs(),
+    )
 
 
-def load_report_json(report_path: Path, source_epub: str):
-    from colophon.report import RepairReport
+def hydrate_report(data: dict, source_epub: str):
+    """Build a RepairReport from parsed repair-report.json data."""
+    from colophon.report import ChangeStatus, Confidence, RepairChange, RepairReport
 
     report = RepairReport(source_epub=source_epub)
-    if not report_path.exists():
-        return report
-    data = json.loads(report_path.read_text(encoding="utf-8"))
     report.skipped_reason = data.get("skipped_reason")
     val = data.get("validation", {})
     report.validation_errors_before = val.get("errors_before", 0)
     report.validation_errors_after = val.get("errors_after", 0)
     report.validation_warnings_before = val.get("warnings_before", 0)
     report.validation_warnings_after = val.get("warnings_after", 0)
+
+    for row in data.get("changes", []):
+        stage = row.get("stage")
+        description = row.get("description")
+        confidence = row.get("confidence")
+        status = row.get("status")
+        if not (stage and description and confidence and status):
+            continue
+        report.changes.append(
+            RepairChange(
+                stage=stage,
+                description=description,
+                confidence=Confidence(confidence),
+                status=ChangeStatus(status),
+                location=row.get("location"),
+                original=row.get("original"),
+                replacement=row.get("replacement"),
+            )
+        )
     return report
+
+
+def load_report_json(report_path: Path, source_epub: str):
+    from colophon.report import RepairReport
+
+    if not report_path.exists():
+        return RepairReport(source_epub=source_epub)
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    return hydrate_report(data, source_epub)
