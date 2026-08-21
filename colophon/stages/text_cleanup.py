@@ -4,6 +4,7 @@ Normalises OCR and conversion artifacts in spine HTML text nodes:
 
   - Unicode ligature and mojibake repair
   - Hard hyphen and mid-sentence line-break resolution (dictionary + graph)
+  - Mid-sentence ``</p><p>`` wrap joining (conversion hard returns)
   - Carriage-return and OCR noise removal
   - Proper-noun canonicalisation from the Stage 1 semantic graph
   - Deterministic local-coherence fixes (Tier A: fused/split words, OCR confusables)
@@ -323,6 +324,10 @@ def _cleanup_document(
     text_changed = False
     dinkus = 0
 
+    joined = _join_false_paragraphs(soup, location, report, dry_run=dry_run)
+    if joined:
+        text_changed = True
+
     for node in list(soup.find_all(string=True)):
         if not isinstance(node, NavigableString):
             continue
@@ -354,6 +359,82 @@ def _cleanup_document(
         dinkus = _recover_dinkuses(soup, dry_run=dry_run)
 
     return text_changed, dinkus
+
+
+_SENTENCE_END = re.compile(r"[.!?…][\"”'»]*\s*$")
+
+
+def _next_paragraph(tag: Tag) -> Tag | None:
+    sib = tag.next_sibling
+    while sib is not None:
+        if isinstance(sib, NavigableString) and not str(sib).strip():
+            sib = sib.next_sibling
+            continue
+        if isinstance(sib, Tag) and sib.name == "p":
+            return sib
+        return None
+    return None
+
+
+def _should_join_paragraphs(left: str, right: str) -> bool:
+    left = left.rstrip()
+    right = right.lstrip()
+    if not left or not right:
+        return False
+    if _SENTENCE_END.search(left):
+        return False
+    return right[0].islower()
+
+
+def _join_false_paragraphs(
+    soup: BeautifulSoup,
+    location: str = "",
+    report: Any = None,
+    *,
+    dry_run: bool = False,
+) -> int:
+    """Merge ``</p><p>`` wraps that split a sentence mid-thought.
+
+    Conversion artifacts often turn a hard line wrap into two paragraphs.
+    Join when the first does not end a sentence and the next starts lowercase.
+    """
+    count = 0
+    progressed = True
+    while progressed:
+        progressed = False
+        for para in list(soup.find_all("p")):
+            nxt = _next_paragraph(para)
+            if nxt is None:
+                continue
+            left = para.get_text("", strip=False)
+            right = nxt.get_text("", strip=False)
+            if not _should_join_paragraphs(left, right):
+                continue
+            count += 1
+            progressed = True
+            if dry_run:
+                break
+            joiner = "" if left.rstrip().endswith(("—", "–", "-")) else " "
+            if para.contents and isinstance(para.contents[-1], NavigableString):
+                para.contents[-1].replace_with(str(para.contents[-1]).rstrip() + joiner)
+            elif joiner:
+                para.append(joiner)
+            for child in list(nxt.contents):
+                para.append(child.extract())
+            nxt.decompose()
+            if report is not None:
+                snippet = (left.rstrip()[-40:] + joiner + right.lstrip()[:40]).replace("\n", " ")
+                report.add(RepairChange(
+                    stage="Stage 3",
+                    description="Joined mid-sentence paragraph wrap",
+                    confidence=Confidence.HIGH,
+                    status=ChangeStatus.APPLIED,
+                    location=location,
+                    original=(left[-60:] + " | " + right[:60]).replace("\n", " "),
+                    replacement=snippet,
+                ))
+            break
+    return count
 
 
 def _clean_text(

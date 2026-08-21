@@ -410,11 +410,11 @@ colophon/
 | Milestone | Scope |
 |---|---|
 | **v0.1 — Core Pipeline** | Unpack/validate (built-in pure-Python validator) ✅, repack ✅, CLI skeleton ✅, repair report ✅, DRM gating ✅, TOC rebuild ✅, basic HTML repair |
-| **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, OCR noise, local coherence repair (fused/split words, dropped punctuation, OCR confusables — LLM-proposes/deterministic-validates), `--interactive` mode, confidence scores |
+| **v0.2 — Text Cleanup** | Ligature fix, hard hyphen/CR removal, **mid-sentence `</p><p>` wrap join** ✅, OCR noise, local coherence repair (fused/split words, dropped punctuation, OCR confusables — LLM-proposes/deterministic-validates), `--interactive` mode, confidence scores |
 | **v0.3 — Semantic Graph + Proper Nouns** | NER ✅, variant clustering ✅ (LLM + deterministic cluster-merge — landed early in Stage 1); **LLM reconciliation pass** for no-shared-substring aliases (Slavic naming), confidence-gated; Russian-novel stress fixtures + cluster purity/completeness scoring; proper noun consistency application (Stage 3); Calibre plugin alpha |
 | **v0.4 — Chapter Detection & Page Numbers** | Heading/topic-shift splitting, dinkus recovery, page-list nav, header/footer artifact removal |
 | **v0.5 — CSS, Fonts + EPUB 2→3 Upgrade** | CSS sanitization, IDPF/Adobe font obfuscation re-keying (so repaired EPUBs don't break embedded fonts), optional EPUB version upgrade path |
-| **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable |
+| **v1.0 — Stable** | Full test coverage, contributor docs, PyPI release, Calibre plugin stable; **in-plugin review UI** for applied vs flagged vs rejected candidates (today CLI `--interactive` only) |
 | **Future — Collections & Omnibus Support** | Detect "complete works"/anthology EPUBs; model the Collection → Work → Chapter hierarchy; scope the semantic graph and register assessment per work; separate author text from editorial apparatus (intros, indexes, publisher catalogues). Fixture: *Complete Works of James Joyce* (Delphi) |
 | **Future — OCR Source Scanning** | Tesseract integration for non-text PDFs and Amazon Topaz `.tpz` files; ground-truth scan validation (provide a physical scan as reference to validate AI inferences) |
 | **Future — EPUB MCP Server** | An MCP server exposing book structure (chapters, entities, TOC) as navigable resources, enabling LLMs to reliably answer "summarize chapter 12" without hallucinating scope or getting confused about a structure they don't know how to effectively parse |
