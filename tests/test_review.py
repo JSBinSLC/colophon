@@ -117,3 +117,47 @@ def test_refuse_non_unique_match(tmp_path: Path):
     with pytest.raises(ValueError, match="not unique"):
         apply_actions(work, report, [ReviewAction(0, "apply")])
     assert (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8") == html
+
+
+def test_refuse_join_row_revert(tmp_path: Path):
+    html = "<html><body><p>left turn she had come</p></body></html>"
+    work = _work(tmp_path, html)
+    report = _report({
+        "status": "applied",
+        "location": "ch1.xhtml",
+        "original": "left | turn she had come",
+        "replacement": "left turn she had come",
+        "description": "Joined mid-sentence paragraph wrap",
+    })
+    with pytest.raises(ValueError, match="Paragraph-join"):
+        apply_actions(work, report, [ReviewAction(0, "revert")])
+    assert (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8") == html
+
+
+def test_refuse_reject_of_applied(tmp_path: Path):
+    html = "<html><body><p>Best</p></body></html>"
+    work = _work(tmp_path, html)
+    report = _report({
+        "status": "applied",
+        "location": "ch1.xhtml",
+        "original": "Test",
+        "replacement": "Best",
+        "description": "fix",
+    })
+    with pytest.raises(ValueError, match="revert first"):
+        apply_actions(work, report, [ReviewAction(0, "reject")])
+    assert (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8") == html
+
+
+def test_refuse_apply_when_already_applied(tmp_path: Path):
+    html = "<html><body><p>Best</p></body></html>"
+    work = _work(tmp_path, html)
+    report = _report({
+        "status": "applied",
+        "location": "ch1.xhtml",
+        "original": "Test",
+        "replacement": "Best",
+        "description": "fix",
+    })
+    with pytest.raises(ValueError, match="already applied"):
+        apply_actions(work, report, [ReviewAction(0, "apply")])

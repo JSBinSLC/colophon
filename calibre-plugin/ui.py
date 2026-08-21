@@ -136,8 +136,11 @@ class ColophonAction(InterfaceAction):
 
         from calibre_plugins.colophon.review_dialog import ReviewDialog
 
-        dialog = ReviewDialog(self.gui, db, book_id, parent=self.gui)
-        dialog.exec()
+        try:
+            dialog = ReviewDialog(self.gui, db, book_id, parent=self.gui)
+            dialog.exec()
+        except Exception as exc:  # noqa: BLE001 — surface to GUI
+            error_dialog(self.gui, "Colophon", str(exc), show=True)
 
     def _on_done(self, payload: dict):
         lines = []

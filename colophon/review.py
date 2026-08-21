@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _ITALICS_DESC = "Missing italics candidate (thought attribution)"
+_JOIN_DESC = "Joined mid-sentence paragraph wrap"
 
 
 @dataclass
@@ -27,9 +28,23 @@ def apply_actions(work_dir: Path, report: dict, actions: list[ReviewAction]) -> 
         if act.index < 0 or act.index >= len(changes):
             raise ValueError(f"Change index out of range: {act.index}")
         change = changes[act.index]
+        status = change.get("status")
+        description = change.get("description") or ""
+
         if act.action == "reject":
+            if status == "applied":
+                raise ValueError("Reject does not undo applied HTML; revert first")
             change["status"] = "skipped"
             continue
+        if act.action == "apply" and status == "applied":
+            raise ValueError("Change is already applied")
+        if act.action == "revert" and status != "applied":
+            raise ValueError("Only applied changes can be reverted")
+        if description == _JOIN_DESC:
+            raise ValueError(
+                "Paragraph-join rows cannot be applied or reverted from the report"
+            )
+
         original = change.get("original")
         replacement = change.get("replacement")
         if not original and not replacement:
