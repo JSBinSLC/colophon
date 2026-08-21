@@ -63,12 +63,15 @@ def repair_epub_for_book(db, book_id: int) -> dict:
             config.output.persist_graph = False
 
         report_tmp = tmp_path / "repair-report.json"
-        if can_load_ai_deps_in_calibre():
-            report = pipeline.run(src, config, quiet=True)
-            report.write(report_tmp)
-        else:
+        # ZIP installs vendor Colophon. Host-Python is optional (set
+        # host_colophon_repo) only when you want AI outside Calibre's interpreter.
+        use_host = bool(prefs.get("host_colophon_repo")) and not can_load_ai_deps_in_calibre()
+        if use_host:
             run_pipeline_host(src, config, report_tmp)
             report = load_report_json(report_tmp, str(src))
+        else:
+            report = pipeline.run(src, config, quiet=True)
+            report.write(report_tmp)
 
         if report.skipped_reason:
             return {

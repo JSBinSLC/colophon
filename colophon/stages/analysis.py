@@ -115,12 +115,20 @@ class AnalysisStage(Stage):
             # Probe the model before sending anything: pick up the real max output
             # tokens (LiteLLM doesn't know them for OpenRouter models) and let
             # _build_graph preview chunk count and cost.
-            info = _probe_model()(config.llm.model, api_key)
-            if info.max_output_tokens and not config.llm.max_output_tokens:
-                config.llm.max_output_tokens = info.max_output_tokens
+            try:
+                info = _probe_model()(config.llm.model, api_key)
+                if info.max_output_tokens and not config.llm.max_output_tokens:
+                    config.llm.max_output_tokens = info.max_output_tokens
 
-            adapter = _llm_adapter_cls()(config.llm)
-            graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
+                adapter = _llm_adapter_cls()(config.llm)
+                graph = _build_graph(adapter, config, spine_texts, source_sha256, info)
+            except Exception as exc:
+                log.warning(
+                    "Stage 1: LLM backend unavailable (%s: %s); falling back to spaCy",
+                    type(exc).__name__,
+                    exc,
+                )
+                graph = _build_graph_spacy(config, spine_texts, source_sha256)
 
         # Seed config-provided alias hints regardless of backend (LLM or spaCy).
         _apply_hint_groups(graph, config)
