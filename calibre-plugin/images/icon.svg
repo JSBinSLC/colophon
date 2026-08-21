@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Printer's-mark colophon: open book + fleuron. Reads at toolbar size. -->
+  <defs>
+    <linearGradient id="pageL" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff8ea"/>
+      <stop offset="1" stop-color="#e8d9b8"/>
+    </linearGradient>
+    <linearGradient id="pageR" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff8ea"/>
+      <stop offset="1" stop-color="#e2d0a8"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0d078"/>
+      <stop offset="0.55" stop-color="#d4a017"/>
+      <stop offset="1" stop-color="#a67c00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- fleuron / printer's flower -->
+  <g fill="url(#gold)" transform="translate(128 52)">
+    <path d="M0-22 C6-10 10-6 22 0 C10 6 6 10 0 22 C-6 10 -10 6 -22 0 C-10-6 -6-10 0-22Z"/>
+    <circle r="5.5" fill="#fff3c4"/>
+  </g>
+
+  <!-- open book -->
+  <g stroke="#2a2218" stroke-width="7" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M128 92 L52 78 L36 196 Q128 220 128 220 Z" fill="url(#pageL)"/>
+    <path d="M128 92 L204 78 L220 196 Q128 220 128 220 Z" fill="url(#pageR)"/>
+    <path d="M128 92 L128 220" stroke="#5a3d14" stroke-width="8"/>
+  </g>
+
+  <!-- page rules — vanish at tiny size, help at 32px+ -->
+  <g stroke="#c4b48a" stroke-width="3" fill="none" opacity="0.85">
+    <path d="M60 118 L112 128"/>
+    <path d="M58 142 L112 150"/>
+    <path d="M56 166 L112 172"/>
+    <path d="M196 118 L144 128"/>
+    <path d="M198 142 L144 150"/>
+    <path d="M200 166 L144 172"/>
+  </g>
+</svg>

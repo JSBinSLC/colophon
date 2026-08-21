@@ -31,13 +31,16 @@ class ColophonAction(InterfaceAction):
     name = "Colophon"
 
     action_spec = (
-        "Repair and Proofread with Colophon",
+        "Colophon",
         None,
-        "Repair and proofread EPUB structure, navigation, and OCR artifacts",
+        "Repair and Proofread with Colophon",
         None,
     )
 
     def genesis(self):
+        # get_icons is injected by Calibre into plugin modules.
+        icon = get_icons("images/icon.png", "Colophon")  # type: ignore[name-defined]
+        self.qaction.setIcon(icon)
         self.qaction.triggered.connect(self.repair_selected)
 
     def apply_settings(self):
