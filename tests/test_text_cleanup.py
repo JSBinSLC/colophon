@@ -210,6 +210,121 @@ def test_proper_noun_map_respects_word_boundaries():
     assert "Finny" in out                          # not corrupted inside 'Finny'
 
 
+def _graph(*, characters=None, places=None, organizations=None) -> dict:
+    return {
+        "entities": {
+            "characters": characters or [],
+            "places": places or [],
+            "organizations": organizations or [],
+            "invented_terms": [],
+        },
+        "chapters": [],
+    }
+
+
+def test_proper_noun_map_does_not_double_already_present_remainder():
+    """A short variant must not append the rest of the canonical twice."""
+    graph = _graph(places=[{"canonical": "Eanna district", "variants": ["Eanna"]}])
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "The Eanna district was ancient.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert out == "The Eanna district was ancient."
+
+
+def test_proper_noun_map_does_not_stack_title_and_full_name():
+    """Title abbreviations plus a surname must not become 'Doctor Doctor …'."""
+    graph = _graph(
+        characters=[
+            {
+                "canonical": "Doctor Vespasian",
+                "variants": ["Dr. Vespasian", "Dr.", "Doctor", "Vespasian"],
+            }
+        ]
+    )
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "Dr. Vespasian arrived.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert "Doctor Doctor" not in out
+    assert out in {"Dr. Vespasian arrived.", "Doctor Vespasian arrived."}
+
+
+def test_proper_noun_map_does_not_stack_separate_title_and_name_entities():
+    """Haiku-style split entities: Dr→Doctor and Vespasian→Doctor Vespasian."""
+    graph = _graph(
+        characters=[
+            {"canonical": "Doctor", "variants": ["Dr.", "Dr"]},
+            {"canonical": "Doctor Vespasian", "variants": ["Vespasian"]},
+        ]
+    )
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "Dr. Vespasian arrived.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert "Doctor Doctor" not in out
+    assert out in {"Dr. Vespasian arrived.", "Doctor Vespasian arrived."}
+
+
+def test_proper_noun_map_does_not_expand_place_to_official_name():
+    """Running text that already uses the short place name must stay short."""
+    graph = _graph(
+        places=[
+            {
+                "canonical": "Grand Canyon National Park",
+                "variants": ["Grand Canyon"],
+            }
+        ]
+    )
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "They hiked the Grand Canyon at dawn.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert out == "They hiked the Grand Canyon at dawn."
+
+
+def test_proper_noun_map_does_not_reapply_tokens_from_just_written_canonical():
+    """Jerzy → Jerzy Stern must not then rewrite Stern into another Jerzy Stern."""
+    graph = _graph(
+        characters=[{"canonical": "Jerzy Stern", "variants": ["Jerzy", "Stern"]}]
+    )
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "Jerzy’s buried treasure",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert "Jerzy Jerzy" not in out
+    assert out in {"Jerzy’s buried treasure", "Jerzy Stern’s buried treasure"}
+
+
+def test_proper_noun_map_does_not_expand_abbreviations():
+    """2–4 letter ALL-CAPS tokens are not expanded to official names."""
+    graph = _graph(
+        organizations=[
+            {"canonical": "United Kingdom", "variants": ["UK"]},
+            {"canonical": "US Department of Justice", "variants": ["DOJ"]},
+        ]
+    )
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "The UK asked the DOJ.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert out == "The UK asked the DOJ."
+    assert ("UK", "United Kingdom") not in repl
+    assert ("DOJ", "US Department of Justice") not in repl
+
+
 def test_stage_analyze_dry_run(tmp_path):
     work = _setup_work(tmp_path)
     ctx = {
