@@ -12,6 +12,7 @@ from colophon.stages.text_cleanup import (
     _build_replacement_map,
     _build_vocabulary,
     _clean_text,
+    _join_false_paragraphs,
     _normalize_unicode,
     run_coherence_corpus,
 )
@@ -219,3 +220,44 @@ def test_stage_analyze_dry_run(tmp_path):
     TextCleanupStage().analyze(ctx)
     assert ctx["report"].changes[0].status == ChangeStatus.FLAGGED
     assert "K1rk" in (work / "OEBPS" / "ch1.xhtml").read_text(encoding="utf-8")
+
+
+def test_join_false_paragraph_mid_sentence():
+    from bs4 import BeautifulSoup
+
+    html = (
+        '<p class="calibre_">got on board, and made the left</p>'
+        '<p class="calibre_">turn she had come to disdain, looking right.</p>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    report = RepairReport(source_epub="x.epub")
+    n = _join_false_paragraphs(soup, "ch9.xhtml", report)
+    joined = " ".join(soup.get_text(" ").split())
+    assert n == 1
+    assert "left turn she had come to disdain" in joined
+    assert len(soup.find_all("p")) == 1
+
+
+def test_join_false_paragraph_after_emdash():
+    from bs4 import BeautifulSoup
+
+    html = (
+        '<p>what Deacon called “executive decisions”—</p>'
+        '<p>mostly signing off on what he recommended.</p>'
+    )
+    soup = BeautifulSoup(html, "html.parser")
+    n = _join_false_paragraphs(soup, "ch9.xhtml", RepairReport(source_epub="x.epub"))
+    body = soup.get_text("")
+    assert n == 1
+    assert "decisions”—mostly" in body
+    assert "decisions”— mostly" not in body
+
+
+def test_join_false_paragraph_skips_real_sentence_break():
+    from bs4 import BeautifulSoup
+
+    html = "<p>She boarded the plane.</p><p>The cabin was cramped.</p>"
+    soup = BeautifulSoup(html, "html.parser")
+    n = _join_false_paragraphs(soup, "ch9.xhtml", RepairReport(source_epub="x.epub"))
+    assert n == 0
+    assert len(soup.find_all("p")) == 2

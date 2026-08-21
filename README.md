@@ -46,7 +46,15 @@ Colophon has no external system dependencies. EPUB validation is handled by a bu
 2. In Calibre: **Preferences → Plugins → Load plugin from file** and choose that zip.
 3. Restart Calibre. Configure the plugin (optional API key) under **Preferences → Plugins → Colophon**.
 
-Structural repair (TOC, HTML, CSS, fonts) works without an API key. AI proofreading needs a cloud key or a host Python that can reach Ollama.
+Structural repair (TOC, HTML, CSS, fonts, mid-sentence paragraph wraps) works without an API key.
+
+**AI / LiteLLM.** The plugin talks to Claude, OpenAI, and OpenRouter through [LiteLLM](https://github.com/BerriAI/litellm). An API key is not enough by itself. Calibre’s bundled Python often cannot load LiteLLM’s native wheels. Install it in a normal system Python, then restart Calibre:
+
+```bash
+python3 -m pip install litellm
+```
+
+Preferences → Plugins → Colophon shows whether LiteLLM is ready (inside Calibre, via host Python, or missing).
 
 To rebuild the zip from a git checkout of this branch:
 

@@ -8,39 +8,19 @@ import subprocess
 from pathlib import Path
 
 
-def find_host_python() -> str:
-    """Return a Python on the host that can import colophon and litellm."""
-    from calibre_plugins.colophon.config import prefs
-
-    candidates: list[str] = []
-    if prefs.get("host_python"):
-        candidates.append(prefs["host_python"])
-    for name in ("python3.14", "python3", "python"):
-        path = shutil.which(name)
-        if path:
-            candidates.append(path)
-
-    seen: set[str] = set()
-    for exe in candidates:
-        if not exe or exe in seen:
-            continue
-        seen.add(exe)
-        repo = host_colophon_repo()
-        try:
-            subprocess.run(
-                [exe, "-c", f"import sys; sys.path.insert(0,{str(repo)!r}); import colophon.pipeline, litellm"],
-                check=True,
-                capture_output=True,
-                timeout=20,
-            )
-            return exe
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-            continue
-    raise RuntimeError(
-        "Calibre cannot load the plugin's AI dependencies on this platform. "
-        "Install Colophon in a host Python (pip install -e /path/to/colophon) "
-        "and set host_colophon_repo in plugin preferences."
-    )
+def runtime_paths() -> list[Path]:
+    """sys.path entries so host Python can import vendored colophon + deps."""
+    root = Path(__file__).resolve().parent
+    paths = [root]
+    vendor = root / "vendor"
+    if vendor.is_dir():
+        paths.append(vendor)
+    # Dev checkout: package lives at <repo>/colophon, not <plugin>/colophon.
+    if not (root / "colophon" / "pipeline.py").is_file():
+        repo = root.parent
+        if (repo / "colophon" / "pipeline.py").is_file():
+            paths.insert(0, repo)
+    return paths
 
 
 def host_colophon_repo() -> Path:
@@ -48,13 +28,62 @@ def host_colophon_repo() -> Path:
 
     if prefs.get("host_colophon_repo"):
         return Path(prefs["host_colophon_repo"])
-    plugin = Path(__file__).resolve().parent
-    dev_repo = plugin.parent
-    if (dev_repo / "colophon" / "pipeline.py").is_file():
-        return dev_repo
-    raise RuntimeError(
-        "Set host_colophon_repo in plugin preferences to your Colophon git checkout."
+    return runtime_paths()[0]
+
+
+def _import_probe_script() -> str:
+    inserts = ", ".join(repr(str(p)) for p in runtime_paths())
+    return (
+        "import sys\n"
+        f"for p in ({inserts},):\n"
+        "    if p not in sys.path:\n"
+        "        sys.path.insert(0, p)\n"
+        "import colophon.pipeline, litellm\n"
     )
+
+
+def find_host_python() -> str:
+    """Return a host Python that can import colophon and litellm."""
+    exe = probe_host_python()
+    if exe:
+        return exe
+    raise RuntimeError(
+        "Calibre cannot load LiteLLM (needed to call Claude/OpenAI/OpenRouter). "
+        "Install it in a system Python, then restart Calibre:\n"
+        "  python3 -m pip install litellm\n"
+        "The API key is not enough on its own — LiteLLM is the client that sends it."
+    )
+
+
+def probe_host_python() -> str | None:
+    """Like find_host_python, but returns None instead of raising."""
+    from calibre_plugins.colophon.config import prefs
+
+    candidates: list[str] = []
+    if prefs.get("host_python"):
+        candidates.append(prefs["host_python"])
+    for name in ("python3.14", "python3.13", "python3.12", "python3", "python"):
+        path = shutil.which(name)
+        if path:
+            candidates.append(path)
+
+    seen: set[str] = set()
+    script = _import_probe_script()
+    for exe in candidates:
+        if not exe or exe in seen:
+            continue
+        seen.add(exe)
+        try:
+            subprocess.run(
+                [exe, "-c", script],
+                check=True,
+                capture_output=True,
+                timeout=20,
+            )
+            return exe
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            continue
+    return None
 
 
 def can_load_ai_deps_in_calibre() -> bool:
@@ -70,7 +99,7 @@ def can_load_ai_deps_in_calibre() -> bool:
 def run_pipeline_host(epub_path: Path, config, report_path: Path) -> None:
     """Execute pipeline.run in a subprocess using host Python."""
     py = find_host_python()
-    repo = host_colophon_repo()
+    path_inserts = ", ".join(repr(str(p)) for p in runtime_paths())
 
     env = os.environ.copy()
     key = config.llm.resolved_api_key()
@@ -85,7 +114,9 @@ def run_pipeline_host(epub_path: Path, config, report_path: Path) -> None:
     graph_path = config.output.graph_output_path
     script = f"""
 import sys
-sys.path.insert(0, {str(repo)!r})
+for p in ({path_inserts},):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 from pathlib import Path
 from colophon.config import LLMConfig, OutputConfig, PipelineConfig
 from colophon import pipeline

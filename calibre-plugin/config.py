@@ -14,6 +14,31 @@ prefs.defaults["host_colophon_repo"] = ""
 prefs.defaults["host_python"] = ""
 
 
+def _ai_status_message() -> str:
+    """One-line LiteLLM readiness check for the preferences pane."""
+    try:
+        from calibre_plugins.colophon.host_runner import (
+            can_load_ai_deps_in_calibre,
+            probe_host_python,
+        )
+    except Exception:
+        return "AI status: could not run the LiteLLM check."
+
+    if can_load_ai_deps_in_calibre():
+        return "AI status: LiteLLM is loaded inside Calibre. API keys below will be used."
+    host = probe_host_python()
+    if host:
+        return (
+            f"AI status: Calibre cannot load LiteLLM; repairs will call it via "
+            f"host Python ({host})."
+        )
+    return (
+        "AI status: LiteLLM is not installed. Structural repair still works. "
+        "To use your API key, install LiteLLM in a system Python and restart Calibre:\n"
+        "  python3 -m pip install litellm"
+    )
+
+
 class ConfigWidget(QWidget):
     def __init__(self):
         QWidget.__init__(self)
@@ -21,14 +46,17 @@ class ConfigWidget(QWidget):
         self.setLayout(layout)
 
         intro = QLabel(
-            "Requires Calibre 9.5+. Structural repair (TOC, HTML, CSS, fonts) "
-            "works without any API key.\n"
-            "For AI features — proper noun detection, semantic graph, smarter "
-            "text cleanup — configure a cloud model and its API key below. If "
-            "you're using paid AI, keep Calibre up to date."
+            "Requires Calibre 9.5+. Structural repair (TOC, HTML, CSS, fonts, "
+            "false paragraph wraps) works without any API key.\n"
+            "AI features need LiteLLM (the client that calls Claude/OpenAI) "
+            "plus an API key. The key alone is not enough."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        status = QLabel(_ai_status_message())
+        status.setWordWrap(True)
+        layout.addWidget(status)
 
         form = QFormLayout()
         layout.addLayout(form)
