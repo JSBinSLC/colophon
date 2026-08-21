@@ -31,14 +31,32 @@ See [SPEC.md](SPEC.md) for full design and roadmap.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11+ for the CLI
+- Calibre 9.5+ for the plugin
 
 Colophon has no external system dependencies. EPUB validation is handled by a built-in pure-Python validator — no Java, no epubcheck required.
 
 ## Installation
 
+**Do not `pip install colophon`.** That PyPI name is a different, unrelated stub. This project is not on PyPI yet.
+
+### Calibre plugin (alpha)
+
+1. Download `colophon_calibre_plugin.zip` from the latest [GitHub Release](https://github.com/JSBinSLC/colophon/releases).
+2. In Calibre: **Preferences → Plugins → Load plugin from file** and choose that zip.
+3. Restart Calibre. Configure the plugin (optional API key) under **Preferences → Plugins → Colophon**.
+
+Needs Calibre 9.5+. Structural repair (TOC, HTML, CSS, fonts) works without an API key. Plugin source lives on the `calibre-plugin-alpha` branch.
+
+### CLI (from source)
+
 ```bash
-pip install colophon
+git clone https://github.com/JSBinSLC/colophon.git
+cd colophon
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+colophon fix book.epub
 ```
 
 For local model support (no API key required):
