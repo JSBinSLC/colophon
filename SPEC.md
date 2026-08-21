@@ -362,7 +362,7 @@ Colophon **does not, and will not, break DRM.** DRM-protected EPUBs (e.g. Adobe 
 
 | Target | Priority | Notes |
 |---|---|---|
-| CLI (`pip install colophon`) | v0.1 | Primary interface |
+| CLI (`git clone` + `pip install -e .`; not on PyPI — name taken) | v0.1 | Primary interface |
 | Python library API | v0.1 | Falls out of modular design naturally |
 | Calibre plugin | v0.3 | High priority — target MobileRead forum community |
 | MCP server (EPUB understanding) | Future | See below |
