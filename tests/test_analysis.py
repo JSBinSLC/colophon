@@ -801,3 +801,24 @@ def test_batch_mode_ignored_for_non_openai(tmp_path):
             ctx: dict = {"epub_path": epub, "config": cfg, "work_dir": work_dir}
             stage.run(ctx)
             mock_batch.assert_not_called()   # batch path never entered
+
+
+def test_analysis_falls_back_when_llm_backend_missing(tmp_path):
+    """Calibre ZIP installs often cannot import litellm; Stage 1 must not crash."""
+    epub = _make_epub(tmp_path, {"ch1.html": "Captain Kirk boarded the Enterprise."})
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    _extract_epub(epub, work_dir)
+
+    cfg = _llm_cfg()
+    stage = AnalysisStage()
+    ctx: dict = {"epub_path": epub, "config": cfg, "work_dir": work_dir}
+
+    with patch(
+        "colophon.stages.analysis._probe_model",
+        side_effect=ImportError("No module named 'pydantic_core'"),
+    ):
+        stage.run(ctx)
+
+    assert "book_graph" in ctx
+    assert ctx["book_graph"]["schema_version"] == "2"
