@@ -9,7 +9,7 @@ from pathlib import Path
 from calibre_plugins.colophon.embed import setup_colophon_path
 
 
-def repair_epub_for_book(db, book_id: int) -> dict:
+def repair_epub_for_book(db, book_id: int, *, rebuild_graph: bool | None = None) -> dict:
     """Export EPUB, run Colophon, replace format in library. Returns summary dict."""
     setup_colophon_path()
 
@@ -45,6 +45,8 @@ def repair_epub_for_book(db, book_id: int) -> dict:
     migrate_legacy_colophon_folder(api, book_id, book_folder)
 
     config = build_pipeline_config()
+    if rebuild_graph is not None:
+        config.rebuild_graph = rebuild_graph
 
     with tempfile.TemporaryDirectory(prefix="colophon_calibre_") as tmp:
         tmp_path = Path(tmp)
@@ -132,6 +134,22 @@ def repair_epub_for_book(db, book_id: int) -> dict:
             "graph_path": graph_abs,
             "report_path": report_abs,
         }
+
+
+def restore_original_epub(db, book_id: int) -> dict:
+    """Replace the library EPUB with data/original.epub.orig. Does not re-repair."""
+    setup_colophon_path()
+    from calibre_plugins.colophon.book_data import BACKUP_RELPATH, copy_extra_to_path, has_extra_file
+
+    api = db.new_api
+    if not has_extra_file(api, book_id, BACKUP_RELPATH):
+        raise ValueError("No original.epub.orig backup for this book")
+    with tempfile.TemporaryDirectory(prefix="colophon_restore_") as tmp:
+        dest = Path(tmp) / "original.epub"
+        copy_extra_to_path(api, book_id, BACKUP_RELPATH, dest)
+        with open(dest, "rb") as f:
+            db.add_format(book_id, "EPUB", f, index_is_id=True, notify=False)
+    return {"ok": True, "restored": True}
 
 
 def graph_dir_for_book(db, book_id: int) -> Path:

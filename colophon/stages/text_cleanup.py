@@ -87,6 +87,16 @@ class TextCleanupStage(Stage):
         vocab = _build_vocabulary(book_graph)
         entities = _entity_names(book_graph)
         replacements = _build_replacement_map(book_graph)
+        risky = _build_risky_replacement_map(book_graph)
+        complete_json = None
+        config = ctx.get("config")
+        if config is not None and getattr(config, "llm", None) and config.llm.resolved_api_key():
+            try:
+                from colophon.models.llm_adapter import LLMAdapter
+
+                complete_json = LLMAdapter(config.llm).complete_json
+            except Exception:
+                complete_json = None
         ocr_map = _build_ocr_confusable_map(book_graph)
         chapter_titles = {ch.get("title", "") for ch in book_graph.get("chapters", [])}
         spine_blobs = [
@@ -112,6 +122,7 @@ class TextCleanupStage(Stage):
             text_changed, dinkus = _cleanup_document(
                 soup, vocab, replacements, ocr_map, register, item.href, report,
                 entities=entities, punct_bias=punct_bias,
+                risky=risky, complete_json=complete_json,
             )
             for flag in flag_italics_candidates(soup, item.href):
                 report.add(flag)
@@ -258,6 +269,45 @@ def _is_title_abbr(variant: str) -> bool:
     return variant.rstrip(".").lower() in _TITLE_WORDS
 
 
+def _is_distinct_dictionary_words(variant: str, canonical: str) -> bool:
+    """True when both sides are real English words of different form (Greek vs Greece).
+
+    Case-only and edit-distance-1 pairs stay in the safe map (McCoy, Fin/Finn).
+    """
+    if " " in variant or " " in canonical:
+        return False
+    a, b = variant.lower(), canonical.lower()
+    if a == b:
+        return False
+    if _edit_distance(a, b) <= 1:
+        return False
+    dictionary = _english_dictionary()
+    if not dictionary:
+        return False
+    return a in dictionary and b in dictionary
+
+
+def _edit_distance(a: str, b: str) -> int:
+    if abs(len(a) - len(b)) > 1:
+        return 2
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b))
+    if len(a) > len(b):
+        a, b = b, a
+    # a shorter by 1
+    i = j = diffs = 0
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            i += 1
+            j += 1
+            continue
+        diffs += 1
+        j += 1
+        if diffs > 1:
+            return diffs
+    return diffs + (len(b) - j)
+
+
 def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
     """Variant → canonical pairs, longest variants first.
 
@@ -278,6 +328,8 @@ def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
                     continue
                 if _is_title_abbr(variant) and not _is_title_abbr(canonical):
                     continue
+                if _is_distinct_dictionary_words(variant, canonical):
+                    continue
                 if (
                     category in ("places", "organizations")
                     and len(variant.split()) >= 2
@@ -287,6 +339,37 @@ def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
                 pairs.append((variant, canonical))
     pairs.sort(key=lambda p: len(p[0]), reverse=True)
     return pairs
+
+
+def _build_risky_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
+    """Variant/canonical pairs that are both real words (Greek/Greece).
+
+    These need a per-sentence sense check before apply.
+    """
+    pairs: list[tuple[str, str]] = []
+    for category in ("characters", "places", "organizations", "invented_terms"):
+        for entity in book_graph.get("entities", {}).get(category, []):
+            canonical = (entity.get("canonical") or "").strip()
+            if not canonical:
+                continue
+            for variant in entity.get("variants", []):
+                variant = variant.strip()
+                if variant and variant != canonical and _is_distinct_dictionary_words(variant, canonical):
+                    pairs.append((variant, canonical))
+    pairs.sort(key=lambda p: len(p[0]), reverse=True)
+    return pairs
+
+
+def _sense_gate(
+    complete_json: Any | None,
+) -> Any:
+    from colophon.stages.sense_gate import allow_swap, enclosing_sentence
+
+    def _gate(variant: str, canonical: str, text: str, start: int, end: int) -> bool:
+        sentence = enclosing_sentence(text, start, end)
+        return allow_swap(sentence, variant, canonical, complete_json=complete_json)
+
+    return _gate
 
 
 def _build_ocr_confusable_map(book_graph: dict[str, Any]) -> dict[str, str]:
@@ -345,6 +428,8 @@ def _cleanup_document(
     entities: set[str] | None = None,
     punct_bias: str = "—",
     dry_run: bool = False,
+    risky: list[tuple[str, str]] | None = None,
+    complete_json: Any | None = None,
 ) -> tuple[bool, int]:
     text_changed = False
     dinkus = 0
@@ -364,6 +449,7 @@ def _cleanup_document(
         cleaned = _clean_text(
             original, vocab, replacements, ocr_map, register,
             entities=entities or set(), punct_bias=punct_bias, report=report,
+            risky=risky, complete_json=complete_json,
         )
         if cleaned != original:
             if not dry_run:
@@ -472,6 +558,8 @@ def _clean_text(
     entities: set[str] | None = None,
     punct_bias: str = "—",
     report: Any = None,
+    risky: list[tuple[str, str]] | None = None,
+    complete_json: Any | None = None,
 ) -> str:
     text = _normalize_unicode(text)
     text = _HYPHEN_BREAK.sub(lambda m: m.group(1) + m.group(2) if _is_known_word(
@@ -483,6 +571,10 @@ def _clean_text(
 
     if register == "conventional":
         text = _apply_proper_noun_map(text, replacements, vocab)
+        if risky:
+            text = _apply_proper_noun_map(
+                text, risky, vocab, gate=_sense_gate(complete_json),
+            )
         text = _apply_tier_a_coherence(text, vocab, ocr_map)
         text, tier_b = apply_tier_b_fused(text, vocab, entities or set(), punct_bias)
         if report:
@@ -539,6 +631,8 @@ def _apply_proper_noun_map(
     text: str,
     replacements: list[tuple[str, str]],
     vocab: set[str],
+    *,
+    gate: Any | None = None,
 ) -> str:
     protected_spans: list[tuple[int, int]] = []
 
@@ -567,6 +661,8 @@ def _apply_proper_noun_map(
             ):
                 continue
             if _has_canonical_remainder(text, m_start, m_end, variant, canonical):
+                continue
+            if gate is not None and not gate(variant, canonical, text, m_start, m_end):
                 continue
 
             text = text[:m_start] + canonical + text[m_end:]

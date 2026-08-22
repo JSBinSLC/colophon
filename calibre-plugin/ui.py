@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
-from calibre_plugins.colophon.worker import repair_epub_for_book
+from calibre_plugins.colophon.worker import (
+    repair_epub_for_book,
+    restore_original_epub,
+)
 from qt.core import QMessageBox, QThread, QToolButton, pyqtSignal
 
 
@@ -11,16 +14,17 @@ class RepairThread(QThread):
     finished_ok = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
-    def __init__(self, db, book_ids):
+    def __init__(self, db, book_ids, worker=repair_epub_for_book):
         QThread.__init__(self)
         self.db = db
         self.book_ids = book_ids
+        self.worker = worker
 
     def run(self):
         try:
             results = []
             for book_id in self.book_ids:
-                results.append((book_id, repair_epub_for_book(self.db, book_id)))
+                results.append((book_id, self.worker(self.db, book_id)))
             self.finished_ok.emit({"results": results})
         except Exception as exc:  # noqa: BLE001 — surface to GUI
             self.failed.emit(str(exc))
@@ -29,10 +33,11 @@ class RepairThread(QThread):
 class ColophonAction(InterfaceAction):
     name = "Colophon"
     action_add_menu = True
+    # Whole button opens the menu. No default click — Repair is easy to fire by accident.
     popup_type = (
-        QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        QToolButton.ToolButtonPopupMode.InstantPopup
         if hasattr(QToolButton, "ToolButtonPopupMode")
-        else QToolButton.MenuButtonPopup
+        else QToolButton.InstantPopup
     )
 
     action_spec = (
@@ -46,7 +51,6 @@ class ColophonAction(InterfaceAction):
         # get_icons is injected by Calibre into plugin modules.
         icon = get_icons("images/icon.png", "Colophon")  # type: ignore[name-defined] # noqa: F821
         self.qaction.setIcon(icon)
-        self.qaction.triggered.connect(self.repair_selected)
 
         menu = self.qaction.menu()
         if menu is None:
@@ -57,10 +61,24 @@ class ColophonAction(InterfaceAction):
 
         self.create_menu_action(
             menu,
+            "colophon_repair",
+            "Repair and proofread",
+            icon=icon,
+            triggered=self.repair_selected,
+        )
+        self.create_menu_action(
+            menu,
             "colophon_review_last_report",
             "Review last report",
             icon=icon,
             triggered=self.review_last_report,
+        )
+        self.create_menu_action(
+            menu,
+            "colophon_restore_backup",
+            "Restore backup",
+            icon=icon,
+            triggered=self.restore_backup_selected,
         )
 
     def apply_settings(self):
@@ -105,6 +123,56 @@ class ColophonAction(InterfaceAction):
             "This may take a few minutes.",
             show=True,
         )
+
+    def restore_backup_selected(self):
+        rows = self.gui.library_view.selectionModel().selectedRows()
+        if not rows:
+            error_dialog(self.gui, "Colophon", "Select one or more books first.", show=True)
+            return
+
+        book_ids = [self.gui.library_view.model().id(r) for r in rows]
+        db = self.gui.current_db
+        api = db.new_api
+        from calibre_plugins.colophon.book_data import BACKUP_RELPATH, has_extra_file
+
+        missing = [bid for bid in book_ids if not has_extra_file(api, bid, BACKUP_RELPATH)]
+        if missing:
+            error_dialog(
+                self.gui,
+                "Colophon",
+                "No original.epub.orig backup for one or more selected books. "
+                "Run Repair once first so Colophon can keep a backup.",
+                show=True,
+            )
+            return
+
+        confirm = QMessageBox(self.gui)
+        confirm.setWindowTitle("Colophon — restore backup")
+        confirm.setIcon(QMessageBox.Warning)
+        confirm.setText(
+            "Replace the current EPUB with the pre-Colophon backup. "
+            "The repaired file will be overwritten. This does not run a new repair."
+        )
+        confirm.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if confirm.exec() != QMessageBox.Ok:
+            return
+
+        self.thread = RepairThread(db, book_ids, worker=restore_original_epub)
+        self.thread.finished_ok.connect(self._on_restore_done)
+        self.thread.failed.connect(lambda msg: error_dialog(self.gui, "Colophon", msg, show=True))
+        self.thread.start()
+
+    def _on_restore_done(self, payload: dict):
+        db = self.gui.current_db
+        api = db.new_api
+        lines = []
+        for book_id, result in payload["results"]:
+            title = api.field_for("title", book_id) or f"id:{book_id}"
+            if result.get("ok"):
+                lines.append(f"{title}: restored from backup")
+            else:
+                lines.append(f"{title}: failed")
+        info_dialog(self.gui, "Colophon — restore backup", "\n".join(lines) or "Done.", show=True)
 
     def review_last_report(self):
         rows = self.gui.library_view.selectionModel().selectedRows()
