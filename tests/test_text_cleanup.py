@@ -325,6 +325,21 @@ def test_proper_noun_map_does_not_expand_abbreviations():
     assert ("DOJ", "US Department of Justice") not in repl
 
 
+def test_proper_noun_map_does_not_replace_greek_with_greece():
+    graph = _graph(places=[{"canonical": "Greece", "variants": ["Greek"]}])
+    repl = _build_replacement_map(graph)
+    out = _apply_proper_noun_map(
+        "Some Greek mythology nonsense. The Greek woman ordered Greek food.",
+        repl,
+        _build_vocabulary(graph),
+    )
+    assert "Greece mythology" not in out
+    assert "Greece woman" not in out
+    assert "Greece food" not in out
+    assert "Greek mythology" in out
+    assert ("Greek", "Greece") not in repl
+
+
 def test_stage_analyze_dry_run(tmp_path):
     work = _setup_work(tmp_path)
     ctx = {

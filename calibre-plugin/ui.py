@@ -29,10 +29,11 @@ class RepairThread(QThread):
 class ColophonAction(InterfaceAction):
     name = "Colophon"
     action_add_menu = True
+    # Whole button opens the menu. No default click — Repair is easy to fire by accident.
     popup_type = (
-        QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        QToolButton.ToolButtonPopupMode.InstantPopup
         if hasattr(QToolButton, "ToolButtonPopupMode")
-        else QToolButton.MenuButtonPopup
+        else QToolButton.InstantPopup
     )
 
     action_spec = (
@@ -46,7 +47,6 @@ class ColophonAction(InterfaceAction):
         # get_icons is injected by Calibre into plugin modules.
         icon = get_icons("images/icon.png", "Colophon")  # type: ignore[name-defined] # noqa: F821
         self.qaction.setIcon(icon)
-        self.qaction.triggered.connect(self.repair_selected)
 
         menu = self.qaction.menu()
         if menu is None:
@@ -55,6 +55,13 @@ class ColophonAction(InterfaceAction):
             menu = QMenu(self.gui)
             self.qaction.setMenu(menu)
 
+        self.create_menu_action(
+            menu,
+            "colophon_repair",
+            "Repair and proofread",
+            icon=icon,
+            triggered=self.repair_selected,
+        )
         self.create_menu_action(
             menu,
             "colophon_review_last_report",
