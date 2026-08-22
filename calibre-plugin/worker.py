@@ -136,8 +136,8 @@ def repair_epub_for_book(db, book_id: int, *, rebuild_graph: bool | None = None)
         }
 
 
-def restore_original_epub(db, book_id: int) -> None:
-    """Replace the library EPUB with data/original.epub.orig."""
+def restore_original_epub(db, book_id: int) -> dict:
+    """Replace the library EPUB with data/original.epub.orig. Does not re-repair."""
     setup_colophon_path()
     from calibre_plugins.colophon.book_data import BACKUP_RELPATH, copy_extra_to_path, has_extra_file
 
@@ -149,12 +149,7 @@ def restore_original_epub(db, book_id: int) -> None:
         copy_extra_to_path(api, book_id, BACKUP_RELPATH, dest)
         with open(dest, "rb") as f:
             db.add_format(book_id, "EPUB", f, index_is_id=True, notify=False)
-
-
-def restore_original_and_repair(db, book_id: int) -> dict:
-    """Restore the pre-Colophon EPUB, then repair it with a fresh graph."""
-    restore_original_epub(db, book_id)
-    return repair_epub_for_book(db, book_id, rebuild_graph=True)
+    return {"ok": True, "restored": True}
 
 
 def graph_dir_for_book(db, book_id: int) -> Path:

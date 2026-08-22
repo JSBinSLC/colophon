@@ -5,7 +5,7 @@ from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
 from calibre_plugins.colophon.worker import (
     repair_epub_for_book,
-    restore_original_and_repair,
+    restore_original_epub,
 )
 from qt.core import QMessageBox, QThread, QToolButton, pyqtSignal
 
@@ -75,10 +75,10 @@ class ColophonAction(InterfaceAction):
         )
         self.create_menu_action(
             menu,
-            "colophon_restore_and_repair",
-            "Restore original and re-repair",
+            "colophon_restore_backup",
+            "Restore backup",
             icon=icon,
-            triggered=self.restore_and_repair_selected,
+            triggered=self.restore_backup_selected,
         )
 
     def apply_settings(self):
@@ -124,7 +124,7 @@ class ColophonAction(InterfaceAction):
             show=True,
         )
 
-    def restore_and_repair_selected(self):
+    def restore_backup_selected(self):
         rows = self.gui.library_view.selectionModel().selectedRows()
         if not rows:
             error_dialog(self.gui, "Colophon", "Select one or more books first.", show=True)
@@ -147,28 +147,32 @@ class ColophonAction(InterfaceAction):
             return
 
         confirm = QMessageBox(self.gui)
-        confirm.setWindowTitle("Colophon — restore and re-repair")
+        confirm.setWindowTitle("Colophon — restore backup")
         confirm.setIcon(QMessageBox.Warning)
         confirm.setText(
-            "Replace the current EPUB with the pre-Colophon backup, "
-            "then run a fresh repair (new knowledge graph). "
-            "The current repaired file will be overwritten."
+            "Replace the current EPUB with the pre-Colophon backup. "
+            "The repaired file will be overwritten. This does not run a new repair."
         )
         confirm.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
         if confirm.exec() != QMessageBox.Ok:
             return
 
-        self.thread = RepairThread(db, book_ids, worker=restore_original_and_repair)
-        self.thread.finished_ok.connect(self._on_done)
+        self.thread = RepairThread(db, book_ids, worker=restore_original_epub)
+        self.thread.finished_ok.connect(self._on_restore_done)
         self.thread.failed.connect(lambda msg: error_dialog(self.gui, "Colophon", msg, show=True))
         self.thread.start()
-        info_dialog(
-            self.gui,
-            "Colophon",
-            f"Restoring original and re-repairing {len(book_ids)} book(s)… "
-            "This may take a few minutes.",
-            show=True,
-        )
+
+    def _on_restore_done(self, payload: dict):
+        db = self.gui.current_db
+        api = db.new_api
+        lines = []
+        for book_id, result in payload["results"]:
+            title = api.field_for("title", book_id) or f"id:{book_id}"
+            if result.get("ok"):
+                lines.append(f"{title}: restored from backup")
+            else:
+                lines.append(f"{title}: failed")
+        info_dialog(self.gui, "Colophon — restore backup", "\n".join(lines) or "Done.", show=True)
 
     def review_last_report(self):
         rows = self.gui.library_view.selectionModel().selectedRows()
