@@ -258,6 +258,19 @@ def _is_title_abbr(variant: str) -> bool:
     return variant.rstrip(".").lower() in _TITLE_WORDS
 
 
+def _is_distinct_dictionary_words(variant: str, canonical: str) -> bool:
+    """True when both sides are real English words (Greek vs Greece).
+
+    Those are different parts of speech, not OCR variants.
+    """
+    if " " in variant or " " in canonical:
+        return False
+    dictionary = _english_dictionary()
+    if not dictionary:
+        return False
+    return variant.lower() in dictionary and canonical.lower() in dictionary
+
+
 def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
     """Variant → canonical pairs, longest variants first.
 
@@ -277,6 +290,8 @@ def _build_replacement_map(book_graph: dict[str, Any]) -> list[tuple[str, str]]:
                 if _is_all_caps_abbr(variant):
                     continue
                 if _is_title_abbr(variant) and not _is_title_abbr(canonical):
+                    continue
+                if _is_distinct_dictionary_words(variant, canonical):
                     continue
                 if (
                     category in ("places", "organizations")
