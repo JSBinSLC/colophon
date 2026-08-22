@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from calibre.gui2 import error_dialog, info_dialog
 from calibre.gui2.actions import InterfaceAction
-from calibre_plugins.colophon.worker import repair_epub_for_book
+from calibre_plugins.colophon.worker import (
+    repair_epub_for_book,
+    restore_original_and_repair,
+)
 from qt.core import QMessageBox, QThread, QToolButton, pyqtSignal
 
 
@@ -11,16 +14,17 @@ class RepairThread(QThread):
     finished_ok = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
-    def __init__(self, db, book_ids):
+    def __init__(self, db, book_ids, worker=repair_epub_for_book):
         QThread.__init__(self)
         self.db = db
         self.book_ids = book_ids
+        self.worker = worker
 
     def run(self):
         try:
             results = []
             for book_id in self.book_ids:
-                results.append((book_id, repair_epub_for_book(self.db, book_id)))
+                results.append((book_id, self.worker(self.db, book_id)))
             self.finished_ok.emit({"results": results})
         except Exception as exc:  # noqa: BLE001 — surface to GUI
             self.failed.emit(str(exc))
@@ -69,6 +73,13 @@ class ColophonAction(InterfaceAction):
             icon=icon,
             triggered=self.review_last_report,
         )
+        self.create_menu_action(
+            menu,
+            "colophon_restore_and_repair",
+            "Restore original and re-repair",
+            icon=icon,
+            triggered=self.restore_and_repair_selected,
+        )
 
     def apply_settings(self):
         pass
@@ -109,6 +120,52 @@ class ColophonAction(InterfaceAction):
             self.gui,
             "Colophon",
             f"Repairing and proofreading {len(book_ids)} book(s)… "
+            "This may take a few minutes.",
+            show=True,
+        )
+
+    def restore_and_repair_selected(self):
+        rows = self.gui.library_view.selectionModel().selectedRows()
+        if not rows:
+            error_dialog(self.gui, "Colophon", "Select one or more books first.", show=True)
+            return
+
+        book_ids = [self.gui.library_view.model().id(r) for r in rows]
+        db = self.gui.current_db
+        api = db.new_api
+        from calibre_plugins.colophon.book_data import BACKUP_RELPATH, has_extra_file
+
+        missing = [bid for bid in book_ids if not has_extra_file(api, bid, BACKUP_RELPATH)]
+        if missing:
+            error_dialog(
+                self.gui,
+                "Colophon",
+                "No original.epub.orig backup for one or more selected books. "
+                "Run Repair once first so Colophon can keep a backup.",
+                show=True,
+            )
+            return
+
+        confirm = QMessageBox(self.gui)
+        confirm.setWindowTitle("Colophon — restore and re-repair")
+        confirm.setIcon(QMessageBox.Warning)
+        confirm.setText(
+            "Replace the current EPUB with the pre-Colophon backup, "
+            "then run a fresh repair (new knowledge graph). "
+            "The current repaired file will be overwritten."
+        )
+        confirm.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        if confirm.exec() != QMessageBox.Ok:
+            return
+
+        self.thread = RepairThread(db, book_ids, worker=restore_original_and_repair)
+        self.thread.finished_ok.connect(self._on_done)
+        self.thread.failed.connect(lambda msg: error_dialog(self.gui, "Colophon", msg, show=True))
+        self.thread.start()
+        info_dialog(
+            self.gui,
+            "Colophon",
+            f"Restoring original and re-repairing {len(book_ids)} book(s)… "
             "This may take a few minutes.",
             show=True,
         )
